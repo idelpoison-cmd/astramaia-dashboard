@@ -1,20 +1,35 @@
 import React, { useState } from 'react';
-import { LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { Rocket, Activity, Wind, Thermometer, Globe, Upload, Star, Crosshair, Map, Users, Shield, Cpu, PenTool, Calculator, Laptop } from 'lucide-react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { Rocket, Activity, Wind, Thermometer, Globe, Upload, Star, Crosshair, Map, Users, Shield, Cpu, PenTool, Calculator, Laptop, ChevronDown, ChevronUp, AlertCircle, CheckCircle2, Battery, Wifi } from 'lucide-react';
 import Papa from 'papaparse';
 
 // Datos simulados iniciales (mientras no se suba un archivo)
 const mockFlightData = Array.from({ length: 30 }, (_, i) => ({
   time: i,
   altitude: i < 15 ? 30 * i * (1 - i/30) : 450 - (i - 15) * 15,
-  temperature: 22 - (i * 0.1),
-  gForce: i === 1 ? 4.5 : i === 16 ? 2.5 : 1 + (Math.random() * 0.2 - 0.1),
+  pressure: 750 - (i * 1.2),
+  temperatureAHT: 22 - (i * 0.1),
+  temperatureBMP: 21.8 - (i * 0.1),
+  humidity: 45 + (i * 0.2),
+  ax: i === 1 ? 2.5 : i === 16 ? 1.5 : 0.1,
+  ay: i === 1 ? 1.5 : i === 16 ? 0.8 : 0.1,
+  az: i === 1 ? 4.5 : i === 16 ? -2.5 : 1.0,
+  gForce: i === 1 ? 5.3 : i === 16 ? 3.0 : 1.0,
+  gx: i * 2,
+  gy: i * 1.5,
+  gz: i * 0.5,
+  roll: i * 5,
+  pitch: i < 15 ? 80 : -80,
+  vbat: 3.76 - (i * 0.001),
+  rssi: -40 - (i * 0.5),
+  snr: 13.5 - (i * 0.1),
 }));
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('about');
   const [flightData, setFlightData] = useState(mockFlightData);
   const [fileName, setFileName] = useState('Datos Simulados (Sube tu CSV)');
+  const [showTable, setShowTable] = useState(false);
 
   const handleFileUpload = (event) => {
     const file = event.target.files[0];
@@ -32,8 +47,22 @@ export default function App() {
             return {
               time: row.t_ms ? (row.t_ms / 1000).toFixed(1) : 0,
               altitude: row.alt_rel_m || 0,
-              temperature: row.temp_bmp_C || 0,
+              pressure: row.pres_hPa || 0,
+              temperatureAHT: row.temp_aht_C || 0,
+              temperatureBMP: row.temp_bmp_C || 0,
+              humidity: row.hum_pct || 0,
+              ax: ax,
+              ay: ay,
+              az: az,
               gForce: Math.sqrt(ax*ax + ay*ay + az*az) || 0,
+              gx: row.gx_dps || 0,
+              gy: row.gy_dps || 0,
+              gz: row.gz_dps || 0,
+              roll: row.roll_deg || 0,
+              pitch: row.pitch_deg || 0,
+              vbat: row.vbat_V || 0,
+              rssi: row.rssi_dBm || 0,
+              snr: row.snr_dB || 0,
             };
           });
           setFlightData(parsedData);
@@ -42,20 +71,37 @@ export default function App() {
     }
   };
 
-  const maxAltitude = Math.max(...flightData.map(d => d.altitude)).toFixed(1);
+  // Cálculos de Resumen
+  const maxAltitude = Math.max(...flightData.map(d => d.altitude));
+  const minAltitude = Math.min(...flightData.map(d => d.altitude));
   const maxGForce = Math.max(...flightData.map(d => d.gForce)).toFixed(1);
-  const minTemp = Math.min(...flightData.map(d => d.temperature)).toFixed(1);
+  const currentTemp = flightData.length > 0 ? flightData[flightData.length - 1].temperatureAHT.toFixed(1) : 0;
   const totalTime = flightData.length > 0 ? flightData[flightData.length - 1].time : 0;
+  const deltaPresion = flightData.length > 0 ? (flightData[0].pressure - flightData[flightData.length - 1].pressure).toFixed(2) : 0;
+
+  // Renderizador de Tabla
+  const renderTableRows = () => {
+    return flightData.map((row, index) => (
+      <tr key={index} className="border-b border-slate-800 hover:bg-slate-800/50">
+        <td className="p-3">{row.time}</td>
+        <td className="p-3">{row.altitude.toFixed(2)}</td>
+        <td className="p-3">{row.ax.toFixed(3)}</td>
+        <td className="p-3">{row.ay.toFixed(3)}</td>
+        <td className="p-3">{row.az.toFixed(3)}</td>
+        <td className="p-3">{row.temperatureAHT.toFixed(2)}</td>
+        <td className="p-3">{row.pressure.toFixed(2)}</td>
+      </tr>
+    ));
+  };
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-purple-500/30">
-      {/* Navegación */}
+      {/* NAVEGACIÓN */}
       <nav className="border-b border-slate-800 bg-slate-950/80 backdrop-blur-md sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-20">
             <div className="flex items-center gap-4">
-              {/* Logo Oficial en la barra superior */}
-              <img src="/parche.png" alt="Logo AstraMaia" className="w-14 h-14 object-contain rounded-full drop-shadow-[0_0_10px_rgba(168,85,247,0.6)]" />
+              <img src="/parche.jpg" alt="Logo AstraMaia" className="w-14 h-14 object-contain rounded-full drop-shadow-[0_0_10px_rgba(168,85,247,0.6)]" />
               <span className="font-extrabold text-2xl tracking-widest text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-cyan-400">
                 ASTRAMAIA
               </span>
@@ -74,9 +120,10 @@ export default function App() {
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {activeTab === 'about' ? (
+          /* PESTAÑA: QUIÉNES SOMOS */
           <div className="space-y-20 animate-in fade-in slide-in-from-bottom-8 duration-700 pb-20">
             
-            {/* SECCIÓN 1: INTRODUCCIÓN Y PLÉYADES */}
+            {/* Introducción y Pléyades */}
             <div className="relative py-20 rounded-[2.5rem] overflow-hidden border border-slate-800 shadow-2xl">
               <div className="absolute inset-0 bg-[url('/pleiades.jpg')] bg-cover bg-center opacity-40 mix-blend-screen"></div>
               <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/60 to-transparent"></div>
@@ -86,12 +133,11 @@ export default function App() {
                 <p className="text-slate-200 text-lg mb-10 leading-relaxed font-medium bg-slate-950/50 p-6 rounded-2xl backdrop-blur-sm border border-white/10">
                   El nombre Astra Maia rinde homenaje a la figura femenina muisca vinculada a la Luna (Huitaca), integrando la ciencia que hacemos con nuestras raíces ancestrales. Somos un equipo interdisciplinario de siete mujeres apasionadas por la tecnología espacial, representadas como las siete estrellas de las Pléyades.
                 </p>
-                {/* Foto del Equipo */}
                 <img src="/equipo.jpg" alt="Equipo AstraMaia" className="w-full max-w-3xl mx-auto rounded-2xl border-2 border-purple-500/30 shadow-[0_0_30px_rgba(168,85,247,0.3)] object-cover" />
               </div>
             </div>
 
-            {/* SECCIÓN 2: EL PARCHE DE MISIÓN */}
+            {/* El Parche de Misión */}
             <div className="grid md:grid-cols-2 gap-12 items-center">
               <div className="order-2 md:order-1">
                 <h3 className="text-4xl font-extrabold mb-6 text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-400">El Parche de Misión</h3>
@@ -111,11 +157,11 @@ export default function App() {
                 </div>
               </div>
               <div className="order-1 md:order-2 flex justify-center">
-                <img src="/parche.png" alt="Parche AstraMaia" className="w-full max-w-md drop-shadow-[0_0_40px_rgba(168,85,247,0.4)] hover:scale-105 transition-transform duration-500" />
+                <img src="/parche.jpg" alt="Parche AstraMaia" className="w-full max-w-md drop-shadow-[0_0_40px_rgba(168,85,247,0.4)] hover:scale-105 transition-transform duration-500" />
               </div>
             </div>
 
-            {/* SECCIÓN 3: EL EQUIPO */}
+            {/* El Equipo */}
             <div>
               <div className="text-center mb-12">
                 <h3 className="text-4xl font-extrabold text-white mb-4">Nuestro Equipo de Misión</h3>
@@ -142,7 +188,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* SECCIÓN 4: EL COHETE HUITACA */}
+            {/* El Cohete Huitaca */}
             <div className="bg-slate-900/40 p-8 rounded-3xl border border-slate-800">
               <h3 className="text-4xl font-extrabold mb-10 text-center text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-cyan-400">
                 Vehículo de Lanzamiento: Huitaca
@@ -167,9 +213,11 @@ export default function App() {
 
           </div>
         ) : (
-          /* SECCIÓN TELEMETRÍA (ESTACIÓN TERRENA) */
-          <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
-            <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800 shadow-lg mb-8">
+          /* PESTAÑA: ESTACIÓN TERRENA Y DIAGNÓSTICO */
+          <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700 pb-20">
+            
+            {/* Header de Carga */}
+            <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800 shadow-lg">
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                 <div>
                   <h2 className="text-3xl font-extrabold text-white">Estación Terrena en Vivo</h2>
@@ -178,76 +226,250 @@ export default function App() {
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                       <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
                     </span>
-                    Enlace LoRa (433 MHz) Activo | Archivo: <span className="text-cyan-400 font-mono">{fileName}</span>
+                    Enlace LoRa (433 MHz) | Archivo: <span className="text-cyan-400 font-mono">{fileName}</span>
                   </p>
                 </div>
                 
-                <label className="cursor-pointer bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white px-6 py-3 rounded-xl flex items-center gap-3 font-bold shadow-lg shadow-cyan-900/20 transition-all hover:scale-105">
-                  <Upload size={20} />
+                <label className="cursor-pointer bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white px-6 py-3 rounded-xl flex items-center gap-3 font-bold transition-all">
+                  <Upload size={20} className="text-cyan-400"/>
                   <span>Cargar Datos (CSV)</span>
                   <input type="file" accept=".csv" className="hidden" onChange={handleFileUpload} />
                 </label>
               </div>
             </div>
 
-            {/* Tarjetas de Resumen */}
+            {/* 1. INDICADORES PRINCIPALES */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="p-5 rounded-2xl bg-slate-900/80 border border-slate-800 shadow-md">
-                <div className="text-slate-400 text-sm mb-2 flex items-center gap-2"><Rocket size={18} className="text-cyan-400"/> Apogeo Max</div>
-                <div className="text-3xl font-black text-white">{maxAltitude} <span className="text-base text-slate-500 font-normal">m</span></div>
+              <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 shadow-md">
+                <div className="text-slate-400 text-sm mb-1 font-bold">ALTITUD MÁXIMA</div>
+                <div className="text-3xl font-black text-white">{maxAltitude.toFixed(2)} <span className="text-base text-slate-500 font-normal">m</span></div>
+                <div className="text-xs text-slate-500 mt-2">Máximo registrado en el archivo.</div>
               </div>
-              <div className="p-5 rounded-2xl bg-slate-900/80 border border-slate-800 shadow-md">
-                <div className="text-slate-400 text-sm mb-2 flex items-center gap-2"><Wind size={18} className="text-purple-400"/> Fuerza G Max</div>
-                <div className="text-3xl font-black text-white">{maxGForce} <span className="text-base text-slate-500 font-normal">G</span></div>
+              <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 shadow-md">
+                <div className="text-slate-400 text-sm mb-1 font-bold">ACELERACIÓN MÁXIMA</div>
+                <div className="text-3xl font-black text-white">{maxGForce} <span className="text-base text-slate-500 font-normal">g</span></div>
+                <div className="text-xs text-slate-500 mt-2">Magnitud de aceleración calculada.</div>
               </div>
-              <div className="p-5 rounded-2xl bg-slate-900/80 border border-slate-800 shadow-md">
-                <div className="text-slate-400 text-sm mb-2 flex items-center gap-2"><Thermometer size={18} className="text-orange-400"/> Temp. Mínima</div>
-                <div className="text-3xl font-black text-white">{minTemp} <span className="text-base text-slate-500 font-normal">°C</span></div>
+              <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 shadow-md">
+                <div className="text-slate-400 text-sm mb-1 font-bold">TEMPERATURA</div>
+                <div className="text-3xl font-black text-white">{currentTemp} <span className="text-base text-slate-500 font-normal">°C</span></div>
+                <div className="text-xs text-slate-500 mt-2">Último valor válido registrado.</div>
               </div>
-              <div className="p-5 rounded-2xl bg-slate-900/80 border border-slate-800 shadow-md">
-                <div className="text-slate-400 text-sm mb-2 flex items-center gap-2"><Activity size={18} className="text-emerald-400"/> Tiempo Vuelo</div>
+              <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 shadow-md">
+                <div className="text-slate-400 text-sm mb-1 font-bold">DURACIÓN REGISTRO</div>
                 <div className="text-3xl font-black text-white">{totalTime} <span className="text-base text-slate-500 font-normal">s</span></div>
+                <div className="text-xs text-slate-500 mt-2">Tiempo total de recolección de datos.</div>
               </div>
             </div>
 
-            {/* Gráficos */}
+            {/* 2. EVOLUCIÓN DEL VUELO (GRÁFICAS) */}
+            <h3 className="text-2xl font-bold mt-10 mb-4 border-b border-slate-800 pb-2">Evolución del Vuelo</h3>
             <div className="grid lg:grid-cols-2 gap-6">
-              <div className="p-6 rounded-3xl bg-slate-900 border border-slate-800 shadow-lg">
-                <h3 className="text-xl font-bold mb-6 text-white flex items-center gap-2"><Rocket className="text-cyan-400"/> Perfil de Altitud</h3>
-                <div className="h-72">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={flightData}>
-                      <defs>
-                        <linearGradient id="colorAlt" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#22d3ee" stopOpacity={0.4}/>
-                          <stop offset="95%" stopColor="#22d3ee" stopOpacity={0}/>
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
-                      <XAxis dataKey="time" stroke="#94a3b8" fontSize={12} tickMargin={10} />
-                      <YAxis stroke="#94a3b8" fontSize={12} tickMargin={10} />
-                      <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '0.75rem' }} itemStyle={{ color: '#22d3ee', fontWeight: 'bold' }} />
-                      <Area type="monotone" dataKey="altitude" name="Altitud (m)" stroke="#22d3ee" strokeWidth={4} fillOpacity={1} fill="url(#colorAlt)" />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-
-              <div className="p-6 rounded-3xl bg-slate-900 border border-slate-800 shadow-lg">
-                <h3 className="text-xl font-bold mb-6 text-white flex items-center gap-2"><Wind className="text-purple-400"/> Fuerzas Inerciales (G)</h3>
-                <div className="h-72">
+              
+              {/* Gráfica 1: Altitud */}
+              <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800">
+                <h4 className="font-bold text-slate-300 mb-4 text-center">Altitud relativa vs. tiempo</h4>
+                <div className="h-64">
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={flightData}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
-                      <XAxis dataKey="time" stroke="#94a3b8" fontSize={12} tickMargin={10} />
-                      <YAxis stroke="#94a3b8" fontSize={12} tickMargin={10} />
-                      <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '0.75rem' }} itemStyle={{ color: '#c084fc', fontWeight: 'bold' }} />
-                      <Line type="monotone" dataKey="gForce" name="Fuerza G" stroke="#c084fc" strokeWidth={4} dot={false} activeDot={{ r: 6, fill: '#c084fc' }} />
+                      <XAxis dataKey="time" stroke="#94a3b8" tick={{fontSize: 12}} />
+                      <YAxis stroke="#94a3b8" tick={{fontSize: 12}} />
+                      <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }} />
+                      <Line type="step" dataKey="altitude" stroke="#22d3ee" strokeWidth={2} dot={false} />
+                      {/* Referencia de Cero */}
+                      <Line type="monotone" dataKey={() => 0} stroke="#475569" strokeWidth={1} strokeDasharray="5 5" dot={false} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="flex justify-between text-xs text-slate-400 mt-4 px-4">
+                  <span>Max: {maxAltitude.toFixed(1)}m</span>
+                  <span>Min: {minAltitude.toFixed(1)}m</span>
+                  <span>Var: {(maxAltitude - minAltitude).toFixed(1)}m</span>
+                </div>
+              </div>
+
+              {/* Gráfica 2: Aceleración */}
+              <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800">
+                <h4 className="font-bold text-slate-300 mb-4 text-center">Aceleración del sistema (g)</h4>
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={flightData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
+                      <XAxis dataKey="time" stroke="#94a3b8" tick={{fontSize: 12}} />
+                      <YAxis stroke="#94a3b8" tick={{fontSize: 12}} />
+                      <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }} />
+                      <Line type="linear" dataKey="ax" name="Eje X" stroke="#22d3ee" strokeWidth={2} dot={false} />
+                      <Line type="linear" dataKey="ay" name="Eje Y" stroke="#a855f7" strokeWidth={2} dot={false} />
+                      <Line type="linear" dataKey="az" name="Eje Z" stroke="#fb7185" strokeWidth={2} dot={false} />
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
               </div>
+
+              {/* Gráfica 3: Giroscopio */}
+              <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800">
+                <h4 className="font-bold text-slate-300 mb-4 text-center">Rotación del cohete (°/s)</h4>
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={flightData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
+                      <XAxis dataKey="time" stroke="#94a3b8" tick={{fontSize: 12}} />
+                      <YAxis stroke="#94a3b8" tick={{fontSize: 12}} />
+                      <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }} />
+                      <Line type="linear" dataKey="gx" name="Roll (gx)" stroke="#22d3ee" strokeWidth={1} dot={false} />
+                      <Line type="linear" dataKey="gy" name="Pitch (gy)" stroke="#a855f7" strokeWidth={1} dot={false} />
+                      <Line type="linear" dataKey="gz" name="Yaw (gz)" stroke="#fb7185" strokeWidth={1} dot={false} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              {/* Gráfica 4: Presión */}
+              <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 flex flex-col">
+                <h4 className="font-bold text-slate-300 mb-4 text-center">Evolución de la presión atmosférica (hPa)</h4>
+                <div className="h-64 flex-1">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={flightData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
+                      <XAxis dataKey="time" stroke="#94a3b8" tick={{fontSize: 12}} />
+                      <YAxis domain={['auto', 'auto']} stroke="#94a3b8" tick={{fontSize: 12}} />
+                      <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }} />
+                      <Line type="linear" dataKey="pressure" name="Presión" stroke="#10b981" strokeWidth={2} dot={false} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="text-center mt-2 text-xs text-slate-400 bg-slate-950 py-1 rounded">
+                  Variación total: {deltaPresion} hPa
+                </div>
+              </div>
+
             </div>
+
+            {/* 3. ORIENTACIÓN Y MOVIMIENTO */}
+            <h3 className="text-2xl font-bold mt-10 mb-4 border-b border-slate-800 pb-2">Orientación y movimiento</h3>
+            <div className="grid md:grid-cols-2 gap-6">
+              <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800">
+                <h4 className="font-bold text-slate-300 mb-4 text-center">Roll y Pitch (Grados)</h4>
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={flightData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
+                      <XAxis dataKey="time" stroke="#94a3b8" tick={{fontSize: 12}} />
+                      <YAxis stroke="#94a3b8" tick={{fontSize: 12}} />
+                      <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }} />
+                      <Line type="linear" dataKey="roll" stroke="#3b82f6" strokeWidth={2} dot={false} />
+                      <Line type="linear" dataKey="pitch" stroke="#f59e0b" strokeWidth={2} dot={false} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+              
+              <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 flex flex-col items-center justify-center text-center">
+                <Rocket size={80} className="text-slate-600 mb-4 rotate-45" />
+                <h4 className="font-bold text-slate-300">Modelo Tridimensional</h4>
+                <p className="text-sm text-slate-500 mt-2 max-w-xs">
+                  (Representación visual del cohete). Animación estimativa basada en Roll y Pitch. No representa la orientación tridimensional completa debido a la falta de datos del Magnetómetro (Yaw).
+                </p>
+              </div>
+            </div>
+
+            {/* 4. DIAGNÓSTICO DEL SISTEMA */}
+            <h3 className="text-2xl font-bold mt-10 mb-4 border-b border-slate-800 pb-2 text-purple-400">Diagnóstico del Sistema</h3>
+            <div className="grid md:grid-cols-3 gap-6">
+              
+              {/* Salud de Sensores / Temperatura */}
+              <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800">
+                <h4 className="font-bold text-slate-300 mb-4 flex items-center gap-2"><Thermometer size={16}/> Temperatura y Humedad</h4>
+                <div className="space-y-3 text-sm">
+                  <div className="flex justify-between bg-slate-950 p-2 rounded">
+                    <span className="text-slate-400">Temp AHT:</span> <span>{currentTemp} °C</span>
+                  </div>
+                  <div className="flex justify-between bg-slate-950 p-2 rounded">
+                    <span className="text-slate-400">Temp BMP:</span> <span>{(flightData.length > 0 ? flightData[flightData.length-1].temperatureBMP : 0).toFixed(1)} °C</span>
+                  </div>
+                  <div className="flex justify-between bg-slate-950 p-2 rounded">
+                    <span className="text-slate-400">Diferencia (Error):</span> <span className="text-orange-400">{Math.abs(currentTemp - (flightData.length > 0 ? flightData[flightData.length-1].temperatureBMP : 0)).toFixed(2)} °C</span>
+                  </div>
+                  <div className="flex justify-between bg-slate-950 p-2 rounded border border-cyan-900/30">
+                    <span className="text-slate-400">Humedad Relativa:</span> <span className="text-cyan-400">{(flightData.length > 0 ? flightData[flightData.length-1].humidity : 0).toFixed(1)} %</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Batería y Comunicación */}
+              <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800">
+                <h4 className="font-bold text-slate-300 mb-4 flex items-center gap-2"><Battery size={16}/> Energía y Enlace <Wifi size={16}/></h4>
+                <div className="h-24 mb-4">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={flightData}>
+                      <YAxis domain={['auto', 'auto']} hide />
+                      <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }} />
+                      <Line type="linear" dataKey="vbat" name="Voltaje (V)" stroke="#10b981" strokeWidth={2} dot={false} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                  <div className="text-center text-xs text-slate-500 mt-1">Voltaje Batería (V)</div>
+                </div>
+                <div className="h-20">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={flightData}>
+                      <YAxis hide />
+                      <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }} />
+                      <Line type="linear" dataKey="rssi" name="RSSI" stroke="#3b82f6" strokeWidth={1} dot={false} />
+                      <Line type="linear" dataKey="snr" name="SNR" stroke="#a855f7" strokeWidth={1} dot={false} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                  <div className="text-center text-xs text-slate-500 mt-1">RSSI (Azul) / SNR (Morado)</div>
+                </div>
+              </div>
+
+              {/* Matriz de Estado */}
+              <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800">
+                <h4 className="font-bold text-slate-300 mb-4">Estado de los sensores</h4>
+                <ul className="space-y-3 text-sm font-medium">
+                  <li className="flex items-center justify-between"><span className="text-slate-400">Temp / Humedad</span> <span className="flex items-center gap-1 text-emerald-400"><CheckCircle2 size={16}/> Disponibles</span></li>
+                  <li className="flex items-center justify-between"><span className="text-slate-400">Barómetro</span> <span className="flex items-center gap-1 text-emerald-400"><CheckCircle2 size={16}/> Disponibles</span></li>
+                  <li className="flex items-center justify-between"><span className="text-slate-400">Acelerómetro</span> <span className="flex items-center gap-1 text-emerald-400"><CheckCircle2 size={16}/> Disponibles</span></li>
+                  <li className="flex items-center justify-between"><span className="text-slate-400">Giroscopio</span> <span className="flex items-center gap-1 text-emerald-400"><CheckCircle2 size={16}/> Disponibles</span></li>
+                  <li className="flex items-center justify-between"><span className="text-slate-400">Magnetómetro</span> <span className="flex items-center gap-1 text-orange-400"><AlertCircle size={16}/> Revisar (0)</span></li>
+                  <li className="flex items-center justify-between"><span className="text-slate-400">GPS</span> <span className="flex items-center gap-1 text-red-400"><AlertCircle size={16}/> Sin Fix Válido</span></li>
+                </ul>
+              </div>
+
+            </div>
+
+            {/* 5. EXPLORAR REGISTROS (TABLA) */}
+            <div className="mt-10">
+              <button 
+                onClick={() => setShowTable(!showTable)}
+                className="w-full flex items-center justify-between p-4 bg-slate-800 rounded-xl font-bold text-slate-300 hover:bg-slate-700 transition-colors"
+              >
+                <span>Explorar Registros de Datos</span>
+                {showTable ? <ChevronUp /> : <ChevronDown />}
+              </button>
+              
+              {showTable && (
+                <div className="mt-4 bg-slate-900 rounded-xl border border-slate-800 overflow-x-auto max-h-96">
+                  <table className="w-full text-left text-sm text-slate-300">
+                    <thead className="text-xs uppercase bg-slate-950 text-slate-400 sticky top-0">
+                      <tr>
+                        <th className="p-3 font-bold">Tiempo (s)</th>
+                        <th className="p-3 font-bold">Altitud (m)</th>
+                        <th className="p-3 font-bold">Acel X (g)</th>
+                        <th className="p-3 font-bold">Acel Y (g)</th>
+                        <th className="p-3 font-bold">Acel Z (g)</th>
+                        <th className="p-3 font-bold">Temp (°C)</th>
+                        <th className="p-3 font-bold">Presión (hPa)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {renderTableRows()}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
           </div>
         )}
       </main>
