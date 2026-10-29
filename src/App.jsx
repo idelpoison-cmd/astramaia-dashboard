@@ -87,28 +87,39 @@ export default function App() {
         {activeTab === 'about' ? (
           <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
             <div className="text-center max-w-3xl mx-auto py-12">
-              <h1 className="text-4xl font-extrabold mb-4">Proyecto CanSat AstraMaia</h1>
+              <h1 className="text-4xl font-extrabold mb-4 text-cyan-400">Proyecto CanSat AstraMaia</h1>
+              <h2 className="text-2xl font-bold mb-4">Equipo 318 - ACMA (Universidad Distrital)</h2>
               <p className="text-slate-400 text-lg">
-                Explorando la atmósfera un lanzamiento a la vez. Nuestro objetivo es recolectar datos 
-                ambientales precisos y demostrar las capacidades de la ingeniería aeroespacial a escala.
+                El nombre Astra Maia rinde homenaje a la figura femenina muisca vinculada a la Luna (Huitaca),
+                integrando la ciencia que hacemos con nuestras raíces ancestrales[cite: 10]. Somos un equipo interdisciplinario de
+                siete mujeres apasionadas por la tecnología espacial, representadas como las siete estrellas de las Pléyades[cite: 10].
               </p>
             </div>
             
             <div className="grid md:grid-cols-3 gap-6">
               <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 shadow-xl shadow-cyan-900/10">
                 <Globe className="w-10 h-10 text-blue-400 mb-4" />
-                <h3 className="text-xl font-bold mb-2">Visión</h3>
-                <p className="text-slate-400">Inspirar a la próxima generación de científicos e ingenieros mediante el desarrollo de tecnología espacial accesible y de código abierto.</p>
+                <h3 className="text-xl font-bold mb-2">Visión y Misión</h3>
+                <p className="text-slate-400">
+                  Nuestra misión es diseñar, lanzar y recuperar el cohete Huitaca de Categoría 3 (Universitarios) en el
+                  Concurso Colombiano de Cohetería Deportiva 2026, alcanzando un apogeo objetivo de 400m mediante un motor G80-7T[cite: 14].
+                </p>
               </div>
               <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 shadow-xl shadow-cyan-900/10">
                 <Activity className="w-10 h-10 text-cyan-400 mb-4" />
-                <h3 className="text-xl font-bold mb-2">Tecnología</h3>
-                <p className="text-slate-400">Equipado con sensores de alta precisión para medir temperatura, presión, gases atmosféricos (eCO2, TVOC) y fuerzas inerciales (IMU).</p>
+                <h3 className="text-xl font-bold mb-2">Telemetría (CanSat)</h3>
+                <p className="text-slate-400">
+                  La carga útil es un CanSat miniaturizado (300g) que adquiere y registra variables de vuelo
+                  (presión, altitud, aceleración, temperatura ambiente y de combustión) y mide la concentración de gases con el sensor CCS811[cite: 17, 36, 37].
+                </p>
               </div>
               <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 shadow-xl shadow-cyan-900/10">
                 <Info className="w-10 h-10 text-purple-400 mb-4" />
-                <h3 className="text-xl font-bold mb-2">Datos Abiertos</h3>
-                <p className="text-slate-400">Todos los datos recolectados durante nuestros vuelos son procesados y publicados para uso educativo y científico.</p>
+                <h3 className="text-xl font-bold mb-2">Inteligencia Artificial</h3>
+                <p className="text-slate-400">
+                  Los datos recolectados se transmiten en tiempo real mediante un enlace LoRa (433 MHz)[cite: 37]
+                  y se utilizan para alimentar modelos de Redes Neuronales Informadas por la Física (PINN)[cite: 15] que predicen la trayectoria de descenso y el punto de aterrizaje[cite: 36].
+                </p>
               </div>
             </div>
           </div>
