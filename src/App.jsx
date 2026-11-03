@@ -1,23 +1,32 @@
 import React, { useState } from 'react';
-import { LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine } from 'recharts';
 import { Rocket, Activity, Wind, Thermometer, Globe, Upload, Star, Crosshair, Map, Users, Shield, Cpu, PenTool, Calculator, Laptop, ChevronDown, ChevronUp, AlertCircle, CheckCircle2, Battery, Wifi } from 'lucide-react';
 import Papa from 'papaparse';
 
-// Datos de prueba iniciales
-const mockFlightData = Array.from({ length: 30 }, (_, i) => ({
-  time: i, altitude: i < 15 ? i * 26.6 : 400 - (i - 15) * 15, pressure: 750 - i,
-  tempAHT: 22 - (i * 0.1), tempBMP: 21.8 - (i * 0.1), humidity: 45,
-  ax: 0.1, ay: 0.1, az: i === 2 ? 4.5 : 1.0, gForce: i === 2 ? 4.5 : 1.0,
-  gx: i*2, gy: i, gz: 0, roll: i*5, pitch: i < 15 ? 80 : -80, vbat: 3.76, rssi: -45, snr: 13, perdidos: 0
-}));
+// Datos de prueba iniciales (adaptados al nuevo procesamiento)
+const mockFlightData = Array.from({ length: 30 }, (_, i) => {
+  const ax = 0.1; const ay = 0.1; const az = i === 2 ? 4.5 : 1.0;
+  const absG = Math.sqrt(ax*ax + ay*ay + az*az);
+  return {
+    time: (i * 0.1).toFixed(2), 
+    altitude: i < 15 ? i * 26.6 : 400 - (i - 15) * 15, 
+    pressure: 750 - i,
+    tempAHT: 22 - (i * 0.1), tempBMP: 21.8 - (i * 0.1), humidity: 45,
+    ax, ay, az, 
+    gForceAbs: absG, 
+    gForceNet: Math.max(0, absG - 1),
+    gx: i*2, gy: i, gz: 0, roll: i*5, pitch: i < 15 ? 80 : -80, 
+    vbat: 3.76, rssi: -45, snr: 13, perdidos: 0, mx: 0, my: 0, mz: 0, sats: 0
+  };
+});
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('about');
+  const [activeTab, setActiveTab] = useState('telemetry');
   const [flightData, setFlightData] = useState(mockFlightData);
   const [fileName, setFileName] = useState('Datos de Prueba (Sube tu CSV)');
   const [showTable, setShowTable] = useState(false);
 
-  // Mapeo exacto de las columnas del CSV
+  // Lector de CSV con PROCESAMIENTO MATEMÁTICO AVANZADO
   const handleFileUpload = (event) => {
     const file = event.target.files[0];
     if (file) {
@@ -27,17 +36,49 @@ export default function App() {
         dynamicTyping: true,
         skipEmptyLines: true,
         complete: (results) => {
-          const parsedData = results.data.map(row => {
-            const ax = row.ax_g || 0; const ay = row.ay_g || 0; const az = row.az_g || 0;
+          const data = results.data;
+          if (data.length === 0) return;
+
+          // 1. Normalización del Tiempo (T=0)
+          const t0 = data[0].t_ms || 0;
+
+          // 2. Calibración de Altitud en Tierra (P0) - Promedio primeros 10 datos
+          let p0_sum = 0;
+          let p0_count = 0;
+          for (let i = 0; i < Math.min(10, data.length); i++) {
+            if (data[i].pres_hPa) {
+              p0_sum += data[i].pres_hPa;
+              p0_count++;
+            }
+          }
+          const P0 = p0_count > 0 ? p0_sum / p0_count : 1013.25;
+
+          const parsedData = data.map(row => {
+            const ax = row.ax_g || 0; 
+            const ay = row.ay_g || 0; 
+            const az = row.az_g || 0;
+            const pres = row.pres_hPa || P0;
+            
+            // Tiempo en segundos exactos desde despegue/inicio
+            const time_sec = row.t_ms ? ((row.t_ms - t0) / 1000).toFixed(2) : 0;
+            
+            // 3. Altitud Barométrica Recalculada (Fórmula estándar)
+            const alt_real = 44330 * (1 - Math.pow(pres / P0, 1 / 5.255));
+            
+            // 4. Aceleración Absoluta y Neta (restando gravedad 1g)
+            const absG = Math.sqrt(ax*ax + ay*ay + az*az);
+            const netG = Math.max(0, absG - 1); 
+
             return {
-              time: row.t_ms ? (row.t_ms / 1000).toFixed(1) : 0,
-              altitude: row.alt_rel_m || 0,
-              pressure: row.pres_hPa || 0,
+              time: time_sec,
+              altitude: alt_real, // Usamos la calculada matemáticamente en vez de la del ESP32
+              pressure: pres,
               tempAHT: row.temp_aht_C || 0,
               tempBMP: row.temp_bmp_C || 0,
               humidity: row.hum_pct || 0,
               ax: ax, ay: ay, az: az,
-              gForce: Math.sqrt(ax*ax + ay*ay + az*az) || 0,
+              gForceAbs: absG,
+              gForceNet: netG,
               gx: row.gx_dps || 0, gy: row.gy_dps || 0, gz: row.gz_dps || 0,
               mx: row.mx_uT || 0, my: row.my_uT || 0, mz: row.mz_uT || 0,
               sats: row.sats || 0,
@@ -55,16 +96,16 @@ export default function App() {
     }
   };
 
-  // Variables calculadas
+  // Variables calculadas para indicadores
   const maxAltitude = flightData.length > 0 ? Math.max(...flightData.map(d => d.altitude)) : 0;
   const minAltitude = flightData.length > 0 ? Math.min(...flightData.map(d => d.altitude)) : 0;
-  const maxGForce = flightData.length > 0 ? Math.max(...flightData.map(d => d.gForce)) : 0;
+  // Para los jueces, mostramos la G Neta máxima para demostrar el empuje real
+  const maxGForceNet = flightData.length > 0 ? Math.max(...flightData.map(d => d.gForceNet)) : 0;
   const currentTemp = flightData.length > 0 ? flightData[flightData.length - 1].tempAHT : 0;
   const totalTime = flightData.length > 0 ? flightData[flightData.length - 1].time : 0;
   const startPressure = flightData.length > 0 ? flightData[0].pressure : 0;
   const endPressure = flightData.length > 0 ? flightData[flightData.length - 1].pressure : 0;
 
-  // Estado de sensores validado por datos reales
   const lastRow = flightData[flightData.length - 1] || {};
   const magWorks = (lastRow.mx !== 0 || lastRow.my !== 0 || lastRow.mz !== 0);
   const gpsWorks = lastRow.sats > 0;
@@ -100,7 +141,6 @@ export default function App() {
         {activeTab === 'about' ? (
           <div className="space-y-20 animate-in fade-in slide-in-from-bottom-8 duration-700 pb-20">
             
-            {/* SECCIÓN 1: INTRODUCCIÓN Y PLÉYADES */}
             <div className="relative py-20 rounded-[2.5rem] overflow-hidden border border-slate-800 shadow-2xl">
               <div className="absolute inset-0 bg-[url('/pleiades.jpg')] bg-cover bg-center opacity-40 mix-blend-screen"></div>
               <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/60 to-transparent"></div>
@@ -114,7 +154,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* SECCIÓN 2: EL PARCHE DE MISIÓN */}
             <div className="grid md:grid-cols-2 gap-12 items-center">
               <div className="order-2 md:order-1">
                 <h3 className="text-4xl font-extrabold mb-6 text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-400">El Parche de Misión</h3>
@@ -138,7 +177,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* SECCIÓN 3: EL EQUIPO */}
             <div>
               <div className="text-center mb-12">
                 <h3 className="text-4xl font-extrabold text-white mb-4">Nuestro Equipo de Misión</h3>
@@ -165,7 +203,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* SECCIÓN 4: EL COHETE HUITACA */}
             <div className="bg-slate-900/40 p-8 rounded-3xl border border-slate-800">
               <h3 className="text-4xl font-extrabold mb-10 text-center text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-cyan-400">
                 Vehículo de Lanzamiento: Huitaca
@@ -189,13 +226,14 @@ export default function App() {
             </div>
           </div>
         ) : (
-          /* PESTAÑA: ESTACIÓN TERRENA Y DIAGNÓSTICO */
+          
+          /* PESTAÑA: ESTACIÓN TERRENA Y DIAGNÓSTICO MATEMÁTICO */
           <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-20">
             
             {/* Header de Carga */}
             <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-lg">
               <div>
-                <h2 className="text-2xl font-extrabold text-white">Análisis de Telemetría</h2>
+                <h2 className="text-2xl font-extrabold text-white">Análisis de Telemetría (Procesado)</h2>
                 <p className="text-slate-400 text-sm mt-1 flex items-center gap-2">
                   <span className="relative flex h-3 w-3">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
@@ -211,27 +249,27 @@ export default function App() {
               </label>
             </div>
 
-            {/* 1. INDICADORES PRINCIPALES */}
+            {/* 1. INDICADORES PRINCIPALES (Con nuevos datos procesados) */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 shadow-md">
-                <div className="text-slate-400 text-xs font-bold tracking-wider mb-1">ALTITUD MÁXIMA</div>
+                <div className="text-slate-400 text-xs font-bold tracking-wider mb-1">ALTITUD MÁXIMA (CALIBRADA)</div>
                 <div className="text-3xl font-black text-white">{maxAltitude.toFixed(2)} <span className="text-sm text-slate-500 font-normal">m</span></div>
-                <div className="text-xs text-slate-500 mt-2">Máximo registrado en el archivo.</div>
+                <div className="text-xs text-slate-500 mt-2">Calculada vía ecuación barométrica (P0).</div>
               </div>
               <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 shadow-md">
-                <div className="text-slate-400 text-xs font-bold tracking-wider mb-1">ACELERACIÓN MÁXIMA</div>
-                <div className="text-3xl font-black text-white">{maxGForce.toFixed(2)} <span className="text-sm text-slate-500 font-normal">g</span></div>
-                <div className="text-xs text-slate-500 mt-2">Magnitud de aceleración total calculada.</div>
+                <div className="text-slate-400 text-xs font-bold tracking-wider mb-1">ACELERACIÓN MÁXIMA (NETA)</div>
+                <div className="text-3xl font-black text-white">{maxGForceNet.toFixed(2)} <span className="text-sm text-slate-500 font-normal">g</span></div>
+                <div className="text-xs text-slate-500 mt-2">Empuje real (Excluyendo gravedad 1g).</div>
               </div>
               <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 shadow-md">
-                <div className="text-slate-400 text-xs font-bold tracking-wider mb-1">TEMPERATURA</div>
+                <div className="text-slate-400 text-xs font-bold tracking-wider mb-1">TEMPERATURA AHT</div>
                 <div className="text-3xl font-black text-white">{currentTemp.toFixed(1)} <span className="text-sm text-slate-500 font-normal">°C</span></div>
-                <div className="text-xs text-slate-500 mt-2">Último valor válido registrado (AHT).</div>
+                <div className="text-xs text-slate-500 mt-2">Último valor ambiental válido.</div>
               </div>
               <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 shadow-md">
-                <div className="text-slate-400 text-xs font-bold tracking-wider mb-1">DURACIÓN DEL REGISTRO</div>
+                <div className="text-slate-400 text-xs font-bold tracking-wider mb-1">DURACIÓN DEL VUELO</div>
                 <div className="text-3xl font-black text-white">{totalTime} <span className="text-sm text-slate-500 font-normal">s</span></div>
-                <div className="text-xs text-slate-500 mt-2">Tiempo total de recolección de datos.</div>
+                <div className="text-xs text-slate-500 mt-2">Tiempo normalizado (T0 = 0s).</div>
               </div>
             </div>
 
@@ -241,7 +279,7 @@ export default function App() {
               
               {/* Gráfica 1: Altitud */}
               <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 flex flex-col shadow-lg">
-                <h4 className="font-bold text-slate-300 mb-4 text-center">Altitud relativa vs. tiempo</h4>
+                <h4 className="font-bold text-slate-300 mb-4 text-center">Altitud calculada vs. tiempo</h4>
                 <div className="h-64 flex-1">
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={flightData}>
@@ -250,20 +288,20 @@ export default function App() {
                       <YAxis stroke="#94a3b8" tick={{fontSize: 12}} />
                       <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }} />
                       <ReferenceLine y={0} stroke="#64748b" strokeDasharray="3 3" />
-                      <Line type="linear" dataKey="altitude" name="Altitud (m)" stroke="#06b6d4" strokeWidth={2} dot={false} />
+                      <Line type="step" dataKey="altitude" name="Altitud (m)" stroke="#06b6d4" strokeWidth={2} dot={false} />
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
-                <div className="flex justify-between text-xs text-slate-400 mt-4 px-4 bg-slate-950 py-2 rounded-lg">
+                <div className="flex justify-between text-xs text-slate-400 mt-4 px-4 bg-slate-950 py-2 rounded-lg border border-cyan-900/30">
                   <span>Max: {maxAltitude.toFixed(1)} m</span>
                   <span>Min: {minAltitude.toFixed(1)} m</span>
                   <span>Variación: {(maxAltitude - minAltitude).toFixed(1)} m</span>
                 </div>
               </div>
 
-              {/* Gráfica 2: Aceleración */}
+              {/* Gráfica 2: Aceleración cruda */}
               <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 shadow-lg">
-                <h4 className="font-bold text-slate-300 mb-4 text-center">Aceleración del sistema (g)</h4>
+                <h4 className="font-bold text-slate-300 mb-4 text-center">Aceleración del sistema (Cruda)</h4>
                 <div className="h-64">
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={flightData}>
@@ -299,9 +337,9 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Gráfica 4: Presión */}
+              {/* Gráfica 4: Presión (Permite validar el ruido del sensor vs Altitud) */}
               <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 flex flex-col shadow-lg">
-                <h4 className="font-bold text-slate-300 mb-4 text-center">Evolución de la presión atmosférica (hPa)</h4>
+                <h4 className="font-bold text-slate-300 mb-4 text-center">Presión atmosférica cruda (hPa)</h4>
                 <div className="h-64 flex-1">
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={flightData}>
@@ -313,8 +351,8 @@ export default function App() {
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
-                <div className="flex justify-center text-xs text-slate-400 mt-4 px-4 bg-slate-950 py-2 rounded-lg">
-                  <span>Variación total: {(startPressure - endPressure).toFixed(2)} hPa</span>
+                <div className="flex justify-center text-xs text-slate-400 mt-4 px-4 bg-slate-950 py-2 rounded-lg border border-emerald-900/30">
+                  <span>Delta (Variación original): {(startPressure - endPressure).toFixed(2)} hPa</span>
                 </div>
               </div>
             </div>
@@ -362,7 +400,7 @@ export default function App() {
                     <span className="text-slate-400">Temperatura BMP</span> <span className="font-mono">{(lastRow.tempBMP || 0).toFixed(2)} °C</span>
                   </div>
                   <div className="flex justify-between bg-slate-950 p-2.5 rounded border border-orange-500/20">
-                    <span className="text-slate-400">Diferencia térmica</span> <span className="text-orange-400 font-mono">{Math.abs(currentTemp - (lastRow.tempBMP || 0)).toFixed(2)} °C</span>
+                    <span className="text-slate-400">Diferencia (Error)</span> <span className="text-orange-400 font-mono">{Math.abs(currentTemp - (lastRow.tempBMP || 0)).toFixed(2)} °C</span>
                   </div>
                   <div className="flex justify-between bg-slate-950 p-2.5 rounded">
                     <span className="text-slate-400">Humedad Relativa</span> <span className="text-cyan-400 font-mono">{(lastRow.humidity || 0).toFixed(1)} %</span>
@@ -381,7 +419,7 @@ export default function App() {
                       <Line type="linear" dataKey="vbat" name="Batería (V)" stroke="#10b981" strokeWidth={2} dot={false} />
                     </LineChart>
                   </ResponsiveContainer>
-                  <div className="text-center text-xs text-slate-500">Voltaje Batería: {(lastRow.vbat || 0).toFixed(3)} V</div>
+                  <div className="text-center text-xs text-slate-500 font-mono border-t border-slate-800 pt-1">Vbat: {(lastRow.vbat || 0).toFixed(3)} V</div>
                 </div>
                 <div className="h-24 bg-slate-950 rounded-lg p-2">
                   <ResponsiveContainer width="100%" height="100%">
@@ -392,11 +430,11 @@ export default function App() {
                       <Line type="linear" dataKey="snr" name="SNR (dB)" stroke="#a855f7" strokeWidth={1.5} dot={false} />
                     </LineChart>
                   </ResponsiveContainer>
-                  <div className="text-center text-xs text-slate-500">Paquetes perdidos: <span className="text-orange-400 font-bold">{lastRow.perdidos || 0}</span></div>
+                  <div className="text-center text-xs text-slate-500 font-mono border-t border-slate-800 pt-1">Perdidos: <span className="text-orange-400 font-bold">{lastRow.perdidos || 0}</span></div>
                 </div>
               </div>
 
-              {/* Estado Sensores */}
+              {/* Estado Sensores Lógico */}
               <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 shadow-lg">
                 <h4 className="font-bold text-slate-300 mb-4">Estado de los sensores</h4>
                 <ul className="space-y-3 text-sm font-medium">
@@ -405,7 +443,7 @@ export default function App() {
                   <li className="flex items-center justify-between"><span className="text-slate-400">Acelerómetro</span> <span className="flex items-center gap-1 text-emerald-400"><CheckCircle2 size={16}/> Lecturas disponibles</span></li>
                   <li className="flex items-center justify-between"><span className="text-slate-400">Giroscopio</span> <span className="flex items-center gap-1 text-emerald-400"><CheckCircle2 size={16}/> Lecturas disponibles</span></li>
                   <li className="flex items-center justify-between"><span className="text-slate-400">Magnetómetro</span> 
-                    {magWorks ? <span className="flex items-center gap-1 text-emerald-400"><CheckCircle2 size={16}/> Lecturas disponibles</span> : <span className="flex items-center gap-1 text-orange-400"><AlertCircle size={16}/> Requiere revisión</span>}
+                    {magWorks ? <span className="flex items-center gap-1 text-emerald-400"><CheckCircle2 size={16}/> Lecturas disponibles</span> : <span className="flex items-center gap-1 text-orange-400"><AlertCircle size={16}/> Requiere revisión (0)</span>}
                   </li>
                   <li className="flex items-center justify-between"><span className="text-slate-400">GPS</span> 
                     {gpsWorks ? <span className="flex items-center gap-1 text-emerald-400"><CheckCircle2 size={16}/> Fix válido</span> : <span className="flex items-center gap-1 text-red-400"><AlertCircle size={16}/> Sin posicionamiento</span>}
@@ -414,7 +452,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* 5. EXPLORAR REGISTROS */}
+            {/* 5. EXPLORAR REGISTROS (TABLA) */}
             <div className="mt-8">
               <button onClick={() => setShowTable(!showTable)} className="w-full flex items-center justify-between p-4 bg-slate-800 rounded-xl font-bold text-slate-300 hover:bg-slate-700 transition-colors shadow-lg">
                 <span>Explorar registros de datos</span>
@@ -427,7 +465,7 @@ export default function App() {
                     <thead className="text-xs uppercase bg-slate-950 text-slate-400 sticky top-0">
                       <tr>
                         <th className="p-3 font-bold">Tiempo (s)</th>
-                        <th className="p-3 font-bold">Altitud (m)</th>
+                        <th className="p-3 font-bold">Altitud Rec. (m)</th>
                         <th className="p-3 font-bold">Acel X (g)</th>
                         <th className="p-3 font-bold">Acel Y (g)</th>
                         <th className="p-3 font-bold">Acel Z (g)</th>
@@ -454,7 +492,6 @@ export default function App() {
             </div>
           </div>
         )}
-
       </main>
     </div>
   );
