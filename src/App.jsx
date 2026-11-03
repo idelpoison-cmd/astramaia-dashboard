@@ -3,7 +3,7 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { Rocket, Activity, Wind, Thermometer, Globe, Upload, Star, Crosshair, Map, Users, Shield, Cpu, PenTool, Calculator, Laptop, ChevronDown, ChevronUp, AlertCircle, CheckCircle2, Battery, Wifi } from 'lucide-react';
 import Papa from 'papaparse';
 
-// Datos de prueba iniciales (adaptados al nuevo procesamiento)
+// Datos de prueba iniciales
 const mockFlightData = Array.from({ length: 30 }, (_, i) => {
   const ax = 0.1; const ay = 0.1; const az = i === 2 ? 4.5 : 1.0;
   const absG = Math.sqrt(ax*ax + ay*ay + az*az);
@@ -42,10 +42,10 @@ export default function App() {
           // 1. Normalización del Tiempo (T=0)
           const t0 = data[0].t_ms || 0;
 
-          // 2. Calibración de Altitud en Tierra (P0) - Promedio primeros 10 datos
+          // 2. Calibración de Altitud en Tierra (P0) - Promedio primeros 50 datos para mayor estabilidad
           let p0_sum = 0;
           let p0_count = 0;
-          for (let i = 0; i < Math.min(10, data.length); i++) {
+          for (let i = 0; i < Math.min(50, data.length); i++) {
             if (data[i].pres_hPa) {
               p0_sum += data[i].pres_hPa;
               p0_count++;
@@ -71,7 +71,7 @@ export default function App() {
 
             return {
               time: time_sec,
-              altitude: alt_real, // Usamos la calculada matemáticamente en vez de la del ESP32
+              altitude: alt_real, // Usamos la calculada matemáticamente
               pressure: pres,
               tempAHT: row.temp_aht_C || 0,
               tempBMP: row.temp_bmp_C || 0,
@@ -99,13 +99,16 @@ export default function App() {
   // Variables calculadas para indicadores
   const maxAltitude = flightData.length > 0 ? Math.max(...flightData.map(d => d.altitude)) : 0;
   const minAltitude = flightData.length > 0 ? Math.min(...flightData.map(d => d.altitude)) : 0;
-  // Para los jueces, mostramos la G Neta máxima para demostrar el empuje real
   const maxGForceNet = flightData.length > 0 ? Math.max(...flightData.map(d => d.gForceNet)) : 0;
   const currentTemp = flightData.length > 0 ? flightData[flightData.length - 1].tempAHT : 0;
-  const totalTime = flightData.length > 0 ? flightData[flightData.length - 1].time : 0;
   const startPressure = flightData.length > 0 ? flightData[0].pressure : 0;
   const endPressure = flightData.length > 0 ? flightData[flightData.length - 1].pressure : 0;
 
+  // Cálculo corregido del Tiempo Total (Ignorando tiempos negativos o filas corruptas)
+  const validTimes = flightData.map(d => Number(d.time)).filter(t => !isNaN(t) && t >= 0);
+  const totalTime = validTimes.length > 0 ? Math.max(...validTimes).toFixed(1) : 0;
+
+  // Validación de estado de sensores
   const lastRow = flightData[flightData.length - 1] || {};
   const magWorks = (lastRow.mx !== 0 || lastRow.my !== 0 || lastRow.mz !== 0);
   const gpsWorks = lastRow.sats > 0;
@@ -141,6 +144,7 @@ export default function App() {
         {activeTab === 'about' ? (
           <div className="space-y-20 animate-in fade-in slide-in-from-bottom-8 duration-700 pb-20">
             
+            {/* SECCIÓN 1: INTRODUCCIÓN Y PLÉYADES */}
             <div className="relative py-20 rounded-[2.5rem] overflow-hidden border border-slate-800 shadow-2xl">
               <div className="absolute inset-0 bg-[url('/pleiades.jpg')] bg-cover bg-center opacity-40 mix-blend-screen"></div>
               <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/60 to-transparent"></div>
@@ -154,6 +158,7 @@ export default function App() {
               </div>
             </div>
 
+            {/* SECCIÓN 2: EL PARCHE DE MISIÓN */}
             <div className="grid md:grid-cols-2 gap-12 items-center">
               <div className="order-2 md:order-1">
                 <h3 className="text-4xl font-extrabold mb-6 text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-400">El Parche de Misión</h3>
@@ -177,6 +182,7 @@ export default function App() {
               </div>
             </div>
 
+            {/* SECCIÓN 3: EL EQUIPO */}
             <div>
               <div className="text-center mb-12">
                 <h3 className="text-4xl font-extrabold text-white mb-4">Nuestro Equipo de Misión</h3>
@@ -203,6 +209,7 @@ export default function App() {
               </div>
             </div>
 
+            {/* SECCIÓN 4: EL COHETE HUITACA */}
             <div className="bg-slate-900/40 p-8 rounded-3xl border border-slate-800">
               <h3 className="text-4xl font-extrabold mb-10 text-center text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-cyan-400">
                 Vehículo de Lanzamiento: Huitaca
@@ -249,7 +256,7 @@ export default function App() {
               </label>
             </div>
 
-            {/* 1. INDICADORES PRINCIPALES (Con nuevos datos procesados) */}
+            {/* 1. INDICADORES PRINCIPALES */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 shadow-md">
                 <div className="text-slate-400 text-xs font-bold tracking-wider mb-1">ALTITUD MÁXIMA (CALIBRADA)</div>
@@ -337,7 +344,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Gráfica 4: Presión (Permite validar el ruido del sensor vs Altitud) */}
+              {/* Gráfica 4: Presión */}
               <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 flex flex-col shadow-lg">
                 <h4 className="font-bold text-slate-300 mb-4 text-center">Presión atmosférica cruda (hPa)</h4>
                 <div className="h-64 flex-1">
