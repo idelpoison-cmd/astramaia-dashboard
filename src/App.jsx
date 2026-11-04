@@ -1,9 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine } from 'recharts';
 import { Rocket, Activity, Wind, Thermometer, Globe, Upload, Star, Crosshair, Map, Users, Shield, Cpu, PenTool, Calculator, Laptop, ChevronDown, ChevronUp, AlertCircle, CheckCircle2, Battery, Wifi } from 'lucide-react';
 import Papa from 'papaparse';
+import { supabase } from './supabaseClient'; 
 
-// Datos de prueba iniciales
 const mockFlightData = Array.from({ length: 30 }, (_, i) => {
   const ax = 0.1; const ay = 0.1; const az = i === 2 ? 4.5 : 1.0;
   const absG = Math.sqrt(ax*ax + ay*ay + az*az);
@@ -22,101 +22,107 @@ const mockFlightData = Array.from({ length: 30 }, (_, i) => {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('telemetry');
-  const [flightData, setFlightData] = useState(mockFlightData);
-  const [fileName, setFileName] = useState('Datos de Prueba (Sube tu CSV)');
+  const [rawData, setRawData] = useState([]); 
+  const [flightData, setFlightData] = useState(mockFlightData); 
+  const [fileName, setFileName] = useState('Datos de Prueba');
   const [showTable, setShowTable] = useState(false);
+  const [isLive, setIsLive] = useState(false);
 
-  // Lector de CSV con PROCESAMIENTO MATEMÁTICO AVANZADO
+  useEffect(() => {
+    const fetchInitialData = async () => {
+      const { data, error } = await supabase
+        .from('telemetry')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(100);
+        
+      if (data && data.length > 0) {
+        setRawData(data.reverse()); 
+        setIsLive(true);
+      }
+    };
+    fetchInitialData();
+
+    const channel = supabase
+      .channel('telemetry_live')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'telemetry' }, (payload) => {
+        setRawData(prev => [...prev, payload.new]);
+        setIsLive(true);
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, []);
+
+  useEffect(() => {
+    if (rawData.length === 0) return;
+
+    const t0 = rawData[0].t_ms || 0;
+    
+    let p0_sum = 0; let p0_count = 0;
+    for (let i = 0; i < Math.min(50, rawData.length); i++) {
+      if (rawData[i].pres_hPa) { p0_sum += rawData[i].pres_hPa; p0_count++; }
+    }
+    const P0 = p0_count > 0 ? p0_sum / p0_count : 1013.25;
+
+    const processed = rawData.map(row => {
+      const ax = row.ax_g || 0; const ay = row.ay_g || 0; const az = row.az_g || 0;
+      const pres = row.pres_hPa || P0;
+      
+      const time_sec = row.t_ms ? ((row.t_ms - t0) / 1000).toFixed(2) : 0;
+      const alt_real = 44330 * (1 - Math.pow(pres / P0, 1 / 5.255));
+      const absG = Math.sqrt(ax*ax + ay*ay + az*az);
+
+      return {
+        time: time_sec,
+        altitude: alt_real,
+        pressure: pres,
+        tempAHT: row.temp_aht_C || 0,
+        tempBMP: row.temp_bmp_C || 0,
+        humidity: row.hum_pct || 0,
+        ax, ay, az,
+        gForceAbs: absG,
+        gForceNet: Math.max(0, absG - 1),
+        gx: row.gx_dps || 0, gy: row.gy_dps || 0, gz: row.gz_dps || 0,
+        mx: row.mx_uT || 0, my: row.my_uT || 0, mz: row.mz_uT || 0,
+        sats: row.sats || 0,
+        roll: row.roll_deg || 0, pitch: row.pitch_deg || 0,
+        vbat: row.vbat_V || 0, rssi: row.rssi_dBm || 0, snr: row.snr_dB || 0,
+        perdidos: row.perdidos || 0
+      };
+    });
+    setFlightData(processed);
+  }, [rawData]);
+
   const handleFileUpload = (event) => {
     const file = event.target.files[0];
     if (file) {
+      setIsLive(false);
       setFileName(file.name);
       Papa.parse(file, {
-        header: true,
-        dynamicTyping: true,
-        skipEmptyLines: true,
+        header: true, dynamicTyping: true, skipEmptyLines: true,
         complete: (results) => {
-          const data = results.data;
-          if (data.length === 0) return;
-
-          // 1. Normalización del Tiempo (T=0)
-          const t0 = data[0].t_ms || 0;
-
-          // 2. Calibración de Altitud en Tierra (P0) - Promedio primeros 50 datos para mayor estabilidad
-          let p0_sum = 0;
-          let p0_count = 0;
-          for (let i = 0; i < Math.min(50, data.length); i++) {
-            if (data[i].pres_hPa) {
-              p0_sum += data[i].pres_hPa;
-              p0_count++;
-            }
-          }
-          const P0 = p0_count > 0 ? p0_sum / p0_count : 1013.25;
-
-          const parsedData = data.map(row => {
-            const ax = row.ax_g || 0; 
-            const ay = row.ay_g || 0; 
-            const az = row.az_g || 0;
-            const pres = row.pres_hPa || P0;
-            
-            // Tiempo en segundos exactos desde despegue/inicio
-            const time_sec = row.t_ms ? ((row.t_ms - t0) / 1000).toFixed(2) : 0;
-            
-            // 3. Altitud Barométrica Recalculada (Fórmula estándar)
-            const alt_real = 44330 * (1 - Math.pow(pres / P0, 1 / 5.255));
-            
-            // 4. Aceleración Absoluta y Neta (restando gravedad 1g)
-            const absG = Math.sqrt(ax*ax + ay*ay + az*az);
-            const netG = Math.max(0, absG - 1); 
-
-            return {
-              time: time_sec,
-              altitude: alt_real, // Usamos la calculada matemáticamente
-              pressure: pres,
-              tempAHT: row.temp_aht_C || 0,
-              tempBMP: row.temp_bmp_C || 0,
-              humidity: row.hum_pct || 0,
-              ax: ax, ay: ay, az: az,
-              gForceAbs: absG,
-              gForceNet: netG,
-              gx: row.gx_dps || 0, gy: row.gy_dps || 0, gz: row.gz_dps || 0,
-              mx: row.mx_uT || 0, my: row.my_uT || 0, mz: row.mz_uT || 0,
-              sats: row.sats || 0,
-              roll: row.roll_deg || 0,
-              pitch: row.pitch_deg || 0,
-              vbat: row.vbat_V || 0,
-              rssi: row.rssi_dBm || 0,
-              snr: row.snr_dB || 0,
-              perdidos: row.perdidos || 0
-            };
-          });
-          setFlightData(parsedData);
+          setRawData(results.data);
         }
       });
     }
   };
 
-  // Variables calculadas para indicadores
   const maxAltitude = flightData.length > 0 ? Math.max(...flightData.map(d => d.altitude)) : 0;
   const minAltitude = flightData.length > 0 ? Math.min(...flightData.map(d => d.altitude)) : 0;
   const maxGForceNet = flightData.length > 0 ? Math.max(...flightData.map(d => d.gForceNet)) : 0;
   const currentTemp = flightData.length > 0 ? flightData[flightData.length - 1].tempAHT : 0;
   const startPressure = flightData.length > 0 ? flightData[0].pressure : 0;
   const endPressure = flightData.length > 0 ? flightData[flightData.length - 1].pressure : 0;
-
-  // Cálculo corregido del Tiempo Total (Ignorando tiempos negativos o filas corruptas)
   const validTimes = flightData.map(d => Number(d.time)).filter(t => !isNaN(t) && t >= 0);
   const totalTime = validTimes.length > 0 ? Math.max(...validTimes).toFixed(1) : 0;
 
-  // Validación de estado de sensores
   const lastRow = flightData[flightData.length - 1] || {};
   const magWorks = (lastRow.mx !== 0 || lastRow.my !== 0 || lastRow.mz !== 0);
   const gpsWorks = lastRow.sats > 0;
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-purple-500/30">
-      
-      {/* NAVEGACIÓN */}
       <nav className="border-b border-slate-800 bg-slate-950/90 backdrop-blur-md sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-20">
@@ -140,11 +146,8 @@ export default function App() {
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         
-        {/* PESTAÑA: QUIÉNES SOMOS */}
         {activeTab === 'about' ? (
           <div className="space-y-20 animate-in fade-in slide-in-from-bottom-8 duration-700 pb-20">
-            
-            {/* SECCIÓN 1: INTRODUCCIÓN Y PLÉYADES */}
             <div className="relative py-20 rounded-[2.5rem] overflow-hidden border border-slate-800 shadow-2xl">
               <div className="absolute inset-0 bg-[url('/pleiades.jpg')] bg-cover bg-center opacity-40 mix-blend-screen"></div>
               <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/60 to-transparent"></div>
@@ -158,7 +161,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* SECCIÓN 2: EL PARCHE DE MISIÓN */}
             <div className="grid md:grid-cols-2 gap-12 items-center">
               <div className="order-2 md:order-1">
                 <h3 className="text-4xl font-extrabold mb-6 text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-400">El Parche de Misión</h3>
@@ -182,7 +184,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* SECCIÓN 3: EL EQUIPO */}
             <div>
               <div className="text-center mb-12">
                 <h3 className="text-4xl font-extrabold text-white mb-4">Nuestro Equipo de Misión</h3>
@@ -209,7 +210,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* SECCIÓN 4: EL COHETE HUITACA */}
             <div className="bg-slate-900/40 p-8 rounded-3xl border border-slate-800">
               <h3 className="text-4xl font-extrabold mb-10 text-center text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-cyan-400">
                 Vehículo de Lanzamiento: Huitaca
@@ -234,19 +234,25 @@ export default function App() {
           </div>
         ) : (
           
-          /* PESTAÑA: ESTACIÓN TERRENA Y DIAGNÓSTICO MATEMÁTICO */
           <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-20">
-            
-            {/* Header de Carga */}
             <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-lg">
               <div>
                 <h2 className="text-2xl font-extrabold text-white">Análisis de Telemetría (Procesado)</h2>
                 <p className="text-slate-400 text-sm mt-1 flex items-center gap-2">
-                  <span className="relative flex h-3 w-3">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
-                  </span>
-                  Archivo actual: <span className="text-cyan-400 font-mono">{fileName}</span>
+                  {isLive ? (
+                    <>
+                      <span className="relative flex h-3 w-3">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+                      </span>
+                      <span className="text-emerald-400 font-bold">🔴 TRANSMISIÓN EN VIVO (LoRa)</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-slate-500">📄 Archivo local:</span>
+                      <span className="text-cyan-400 font-mono">{fileName}</span>
+                    </>
+                  )}
                 </p>
               </div>
               <label className="cursor-pointer bg-slate-800 hover:bg-slate-700 border border-slate-600 text-white px-5 py-2.5 rounded-lg flex items-center gap-2 font-bold transition-colors shadow-md">
@@ -256,7 +262,6 @@ export default function App() {
               </label>
             </div>
 
-            {/* 1. INDICADORES PRINCIPALES */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 shadow-md">
                 <div className="text-slate-400 text-xs font-bold tracking-wider mb-1">ALTITUD MÁXIMA (CALIBRADA)</div>
@@ -280,11 +285,9 @@ export default function App() {
               </div>
             </div>
 
-            {/* 2. EVOLUCIÓN DEL VUELO */}
             <h3 className="text-xl font-bold mt-10 border-b border-slate-800 pb-2 text-white">Evolución del vuelo</h3>
             <div className="grid lg:grid-cols-2 gap-6">
               
-              {/* Gráfica 1: Altitud */}
               <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 flex flex-col shadow-lg">
                 <h4 className="font-bold text-slate-300 mb-4 text-center">Altitud calculada vs. tiempo</h4>
                 <div className="h-64 flex-1">
@@ -306,7 +309,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Gráfica 2: Aceleración cruda */}
               <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 shadow-lg">
                 <h4 className="font-bold text-slate-300 mb-4 text-center">Aceleración del sistema (Cruda)</h4>
                 <div className="h-64">
@@ -325,7 +327,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Gráfica 3: Giroscopio */}
               <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 shadow-lg">
                 <h4 className="font-bold text-slate-300 mb-4 text-center">Rotación del cohete (°/s)</h4>
                 <div className="h-64">
@@ -344,7 +345,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Gráfica 4: Presión */}
               <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 flex flex-col shadow-lg">
                 <h4 className="font-bold text-slate-300 mb-4 text-center">Presión atmosférica cruda (hPa)</h4>
                 <div className="h-64 flex-1">
@@ -364,7 +364,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* 3. ORIENTACIÓN Y MOVIMIENTO */}
             <h3 className="text-xl font-bold mt-10 border-b border-slate-800 pb-2 text-white">Orientación y movimiento</h3>
             <div className="grid md:grid-cols-2 gap-6">
               <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 shadow-lg">
@@ -392,11 +391,8 @@ export default function App() {
               </div>
             </div>
 
-            {/* 4. DIAGNÓSTICO DEL SISTEMA */}
             <h3 className="text-xl font-bold mt-10 border-b border-slate-800 pb-2 text-purple-400">Diagnóstico del sistema</h3>
             <div className="grid md:grid-cols-3 gap-6">
-              
-              {/* Temperaturas */}
               <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 shadow-lg">
                 <h4 className="font-bold text-slate-300 mb-4 flex items-center gap-2"><Thermometer size={16}/> Temperatura y Humedad</h4>
                 <div className="space-y-2 text-sm">
@@ -415,7 +411,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Batería y Comms */}
               <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 flex flex-col shadow-lg">
                 <h4 className="font-bold text-slate-300 mb-4 flex items-center gap-2"><Battery size={16}/> Energía y Enlace</h4>
                 <div className="h-24 mb-4 bg-slate-950 rounded-lg p-2">
@@ -441,7 +436,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Estado Sensores Lógico */}
               <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 shadow-lg">
                 <h4 className="font-bold text-slate-300 mb-4">Estado de los sensores</h4>
                 <ul className="space-y-3 text-sm font-medium">
@@ -450,7 +444,7 @@ export default function App() {
                   <li className="flex items-center justify-between"><span className="text-slate-400">Acelerómetro</span> <span className="flex items-center gap-1 text-emerald-400"><CheckCircle2 size={16}/> Lecturas disponibles</span></li>
                   <li className="flex items-center justify-between"><span className="text-slate-400">Giroscopio</span> <span className="flex items-center gap-1 text-emerald-400"><CheckCircle2 size={16}/> Lecturas disponibles</span></li>
                   <li className="flex items-center justify-between"><span className="text-slate-400">Magnetómetro</span> 
-                    {magWorks ? <span className="flex items-center gap-1 text-emerald-400"><CheckCircle2 size={16}/> Lecturas disponibles</span> : <span className="flex items-center gap-1 text-orange-400"><AlertCircle size={16}/> Requiere revisión (0)</span>}
+                    {magWorks ? <span className="flex items-center gap-1 text-emerald-400"><CheckCircle2 size={16}/> Lecturas disponibles</span> : <span className="flex items-center gap-1 text-orange-400"><AlertCircle size={16}/> Requiere revisión</span>}
                   </li>
                   <li className="flex items-center justify-between"><span className="text-slate-400">GPS</span> 
                     {gpsWorks ? <span className="flex items-center gap-1 text-emerald-400"><CheckCircle2 size={16}/> Fix válido</span> : <span className="flex items-center gap-1 text-red-400"><AlertCircle size={16}/> Sin posicionamiento</span>}
@@ -459,7 +453,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* 5. EXPLORAR REGISTROS (TABLA) */}
             <div className="mt-8">
               <button onClick={() => setShowTable(!showTable)} className="w-full flex items-center justify-between p-4 bg-slate-800 rounded-xl font-bold text-slate-300 hover:bg-slate-700 transition-colors shadow-lg">
                 <span>Explorar registros de datos</span>
