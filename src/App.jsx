@@ -121,7 +121,6 @@ export default function App() {
     });
     setFlightData(processed);
   };
-
   // 4. CARGA MANUAL DE CSV
   const handleFileUpload = (event) => {
     const file = event.target.files[0];
