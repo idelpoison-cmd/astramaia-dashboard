@@ -1,14 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine } from 'recharts';
-import { Rocket, Activity, Wind, Thermometer, Globe, Upload, Star, Crosshair, Map, Users, Shield, Cpu, PenTool, Calculator, Laptop, ChevronDown, ChevronUp, AlertCircle, CheckCircle2, Battery, Wifi } from 'lucide-react';
+import { Rocket, Activity, Wind, Thermometer, Globe, Upload, Star, Crosshair, Map, Users, Shield, Cpu, PenTool, Calculator, Laptop, ChevronDown, ChevronUp, AlertCircle, CheckCircle2, Battery } from 'lucide-react';
 import Papa from 'papaparse';
-import { supabase } from './supabaseClient'; 
+import { supabase } from './supabaseClient';
+import RocketCanvas from './RocketModel'; // Importamos tu nuevo cohete 3D
 
+// Datos de prueba iniciales (se muestran mientras no hay datos en vivo o CSV)
 const mockFlightData = Array.from({ length: 30 }, (_, i) => {
   const ax = 0.1; const ay = 0.1; const az = i === 2 ? 4.5 : 1.0;
   const absG = Math.sqrt(ax*ax + ay*ay + az*az);
   return {
-    time: (i * 0.1).toFixed(2), 
+    time: i * 0.1, 
     altitude: i < 15 ? i * 26.6 : 400 - (i - 15) * 15, 
     pressure: 750 - i,
     tempAHT: 22 - (i * 0.1), tempBMP: 21.8 - (i * 0.1), humidity: 45,
@@ -16,6 +18,7 @@ const mockFlightData = Array.from({ length: 30 }, (_, i) => {
     gForceAbs: absG, 
     gForceNet: Math.max(0, absG - 1),
     gx: i*2, gy: i, gz: 0, roll: i*5, pitch: i < 15 ? 80 : -80, 
+    eco2: 400, tvoc: 0, vib: 0, lat: 0, lon: 0,
     vbat: 3.76, rssi: -45, snr: 13, perdidos: 0, mx: 0, my: 0, mz: 0, sats: 0
   };
 });
@@ -28,6 +31,7 @@ export default function App() {
   const [showTable, setShowTable] = useState(false);
   const [isLive, setIsLive] = useState(false);
 
+  // 1. CONEXIÓN EN TIEMPO REAL A SUPABASE
   useEffect(() => {
     const fetchInitialData = async () => {
       const { data, error } = await supabase
@@ -54,18 +58,24 @@ export default function App() {
     return () => { supabase.removeChannel(channel); };
   }, []);
 
+  // 2. CEREBRO MATEMÁTICO: Procesa los datos crudos cuando cambian
   useEffect(() => {
     if (rawData.length === 0) return;
+    procesarDatos(rawData);
+  }, [rawData]);
 
-    const t0 = rawData[0].t_ms || 0;
+  // 3. FUNCIÓN DE PROCESAMIENTO CENTRAL (Nube o CSV)
+  const procesarDatos = (data) => {
+    const t0 = data[0].t_ms || 0;
     
+    // Calibrar presión base (P0)
     let p0_sum = 0; let p0_count = 0;
-    for (let i = 0; i < Math.min(50, rawData.length); i++) {
-      if (rawData[i].pres_hPa) { p0_sum += rawData[i].pres_hPa; p0_count++; }
+    for (let i = 0; i < Math.min(50, data.length); i++) {
+      if (data[i].pres_hPa) { p0_sum += data[i].pres_hPa; p0_count++; }
     }
     const P0 = p0_count > 0 ? p0_sum / p0_count : 1013.25;
 
-    const processed = rawData.map(row => {
+    const processed = data.map(row => {
       const ax = row.ax_g || 0; const ay = row.ay_g || 0; const az = row.az_g || 0;
       const pres = row.pres_hPa || P0;
       
@@ -74,7 +84,7 @@ export default function App() {
       const absG = Math.sqrt(ax*ax + ay*ay + az*az);
 
       return {
-        time: time_sec,
+        time: Number(time_sec), // Número para la gráfica
         altitude: alt_real,
         pressure: pres,
         tempAHT: row.temp_aht_C || 0,
@@ -85,6 +95,14 @@ export default function App() {
         gForceNet: Math.max(0, absG - 1),
         gx: row.gx_dps || 0, gy: row.gy_dps || 0, gz: row.gz_dps || 0,
         mx: row.mx_uT || 0, my: row.my_uT || 0, mz: row.mz_uT || 0,
+        
+        // NUEVAS VARIABLES DEL CSV
+        eco2: row.eco2_ppm || 0,
+        tvoc: row.tvoc_ppb || 0,
+        vib: row.vib || 0,
+        lat: row.lat || 0,
+        lon: row.lon || 0,
+
         sats: row.sats || 0,
         roll: row.roll_deg || 0, pitch: row.pitch_deg || 0,
         vbat: row.vbat_V || 0, rssi: row.rssi_dBm || 0, snr: row.snr_dB || 0,
@@ -92,8 +110,9 @@ export default function App() {
       };
     });
     setFlightData(processed);
-  }, [rawData]);
+  };
 
+  // 4. CARGA MANUAL DE CSV
   const handleFileUpload = (event) => {
     const file = event.target.files[0];
     if (file) {
@@ -102,18 +121,22 @@ export default function App() {
       Papa.parse(file, {
         header: true, dynamicTyping: true, skipEmptyLines: true,
         complete: (results) => {
-          setRawData(results.data);
+          // Filtramos filas vacías o corruptas
+          const validData = results.data.filter(row => row.t_ms !== undefined && row.t_ms !== null);
+          setRawData(validData);
         }
       });
     }
   };
 
+  // Variables calculadas para los indicadores
   const maxAltitude = flightData.length > 0 ? Math.max(...flightData.map(d => d.altitude)) : 0;
   const minAltitude = flightData.length > 0 ? Math.min(...flightData.map(d => d.altitude)) : 0;
   const maxGForceNet = flightData.length > 0 ? Math.max(...flightData.map(d => d.gForceNet)) : 0;
   const currentTemp = flightData.length > 0 ? flightData[flightData.length - 1].tempAHT : 0;
   const startPressure = flightData.length > 0 ? flightData[0].pressure : 0;
   const endPressure = flightData.length > 0 ? flightData[flightData.length - 1].pressure : 0;
+  
   const validTimes = flightData.map(d => Number(d.time)).filter(t => !isNaN(t) && t >= 0);
   const totalTime = validTimes.length > 0 ? Math.max(...validTimes).toFixed(1) : 0;
 
@@ -123,6 +146,8 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-purple-500/30">
+      
+      {/* NAVEGACIÓN */}
       <nav className="border-b border-slate-800 bg-slate-950/90 backdrop-blur-md sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-20">
@@ -146,6 +171,7 @@ export default function App() {
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         
+        {/* PESTAÑA MISION */}
         {activeTab === 'about' ? (
           <div className="space-y-20 animate-in fade-in slide-in-from-bottom-8 duration-700 pb-20">
             <div className="relative py-20 rounded-[2.5rem] overflow-hidden border border-slate-800 shadow-2xl">
@@ -209,31 +235,10 @@ export default function App() {
                 ))}
               </div>
             </div>
-
-            <div className="bg-slate-900/40 p-8 rounded-3xl border border-slate-800">
-              <h3 className="text-4xl font-extrabold mb-10 text-center text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-cyan-400">
-                Vehículo de Lanzamiento: Huitaca
-              </h3>
-              <div className="grid md:grid-cols-2 gap-10">
-                <div className="space-y-4">
-                  <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 shadow-inner">
-                    <img src="/cad.png" alt="Render 3D Cohete" className="w-full rounded-xl object-contain h-64" />
-                  </div>
-                  <p className="text-center text-slate-400 font-medium">Renderizado 3D del diseño final</p>
-                </div>
-                <div className="space-y-4">
-                  <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 shadow-inner">
-                    <img src="/planos.png" alt="Planos del Cohete" className="w-full rounded-xl object-contain h-64 bg-slate-200/5 p-2" />
-                  </div>
-                  <p className="text-center text-slate-400 font-medium">
-                    103 cm de largo total, cuerpo de Fibra de Carbono, aletas de MDF y ojiva de ABS.
-                  </p>
-                </div>
-              </div>
-            </div>
           </div>
         ) : (
           
+          /* PESTAÑA ESTACION TERRENA */
           <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-20">
             <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-lg">
               <div>
@@ -294,7 +299,7 @@ export default function App() {
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={flightData}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
-                      <XAxis dataKey="time" stroke="#94a3b8" tick={{fontSize: 12}} />
+                      <XAxis dataKey="time" stroke="#94a3b8" tick={{fontSize: 12}} tickFormatter={(t) => Math.round(t)} />
                       <YAxis stroke="#94a3b8" tick={{fontSize: 12}} />
                       <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }} />
                       <ReferenceLine y={0} stroke="#64748b" strokeDasharray="3 3" />
@@ -315,7 +320,7 @@ export default function App() {
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={flightData}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
-                      <XAxis dataKey="time" stroke="#94a3b8" tick={{fontSize: 12}} />
+                      <XAxis dataKey="time" stroke="#94a3b8" tick={{fontSize: 12}} tickFormatter={(t) => Math.round(t)} />
                       <YAxis stroke="#94a3b8" tick={{fontSize: 12}} />
                       <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }} />
                       <Legend verticalAlign="top" height={36}/>
@@ -333,7 +338,7 @@ export default function App() {
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={flightData}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
-                      <XAxis dataKey="time" stroke="#94a3b8" tick={{fontSize: 12}} />
+                      <XAxis dataKey="time" stroke="#94a3b8" tick={{fontSize: 12}} tickFormatter={(t) => Math.round(t)} />
                       <YAxis stroke="#94a3b8" tick={{fontSize: 12}} />
                       <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }} />
                       <Legend verticalAlign="top" height={36}/>
@@ -351,7 +356,7 @@ export default function App() {
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={flightData}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
-                      <XAxis dataKey="time" stroke="#94a3b8" tick={{fontSize: 12}} />
+                      <XAxis dataKey="time" stroke="#94a3b8" tick={{fontSize: 12}} tickFormatter={(t) => Math.round(t)} />
                       <YAxis domain={['auto', 'auto']} stroke="#94a3b8" tick={{fontSize: 12}} />
                       <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }} />
                       <Line type="linear" dataKey="pressure" name="Presión (hPa)" stroke="#10b981" strokeWidth={2} dot={false} />
@@ -372,7 +377,7 @@ export default function App() {
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={flightData}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
-                      <XAxis dataKey="time" stroke="#94a3b8" tick={{fontSize: 12}} />
+                      <XAxis dataKey="time" stroke="#94a3b8" tick={{fontSize: 12}} tickFormatter={(t) => Math.round(t)} />
                       <YAxis stroke="#94a3b8" tick={{fontSize: 12}} />
                       <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }} />
                       <Legend verticalAlign="top" height={36}/>
@@ -382,17 +387,32 @@ export default function App() {
                   </ResponsiveContainer>
                 </div>
               </div>
-              <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 shadow-lg flex flex-col items-center justify-center text-center">
-                <Rocket size={64} className="text-slate-500 mb-6 rotate-45" />
-                <h4 className="font-bold text-slate-300">Estimación de Actitud</h4>
-                <p className="text-sm text-slate-500 mt-3 max-w-sm">
-                  Representación simplificada de la orientación. La estimación tridimensional requiere calibración de la convención de ejes y datos válidos de guiñada (yaw).
-                </p>
+
+
+            {/* MODELO 3D DEL COHETE */}
+              <div className="rounded-2xl bg-slate-900 border border-slate-800 shadow-lg relative overflow-hidden min-h-[350px] w-full">
+                
+                {/* Textos por encima del Canvas (zIndex alto y pointer-events-none para que no bloqueen el mouse) */}
+                <div className="absolute top-4 left-4 z-10 text-left pointer-events-none">
+                  <h4 className="font-bold text-slate-300 drop-shadow-md">Estimación de Actitud 3D</h4>
+                  <p className="text-xs text-emerald-400 mt-1 font-mono drop-shadow-md bg-slate-950/50 px-2 py-1 rounded inline-block">
+                    Roll: {(lastRow.roll || 0).toFixed(1)}° | Pitch: {(lastRow.pitch || 0).toFixed(1)}°
+                  </p>
+                </div>
+                
+                {/* Aquí renderizamos el Canvas 3D */}
+                <RocketCanvas roll={lastRow.roll || 0} pitch={lastRow.pitch || 0} />
+                
+                <div className="absolute bottom-4 w-full text-center z-10 pointer-events-none">
+                  <p className="text-xs text-slate-400 bg-slate-950/60 px-4 py-1.5 rounded-full inline-block backdrop-blur-sm border border-slate-700">
+                    Arrastra para rotar. Scroll para zoom.
+                  </p>
+                </div>
               </div>
-            </div>
 
             <h3 className="text-xl font-bold mt-10 border-b border-slate-800 pb-2 text-purple-400">Diagnóstico del sistema</h3>
-            <div className="grid md:grid-cols-3 gap-6">
+            <div className="grid md:grid-cols-4 gap-6">
+              
               <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 shadow-lg">
                 <h4 className="font-bold text-slate-300 mb-4 flex items-center gap-2"><Thermometer size={16}/> Temperatura y Humedad</h4>
                 <div className="space-y-2 text-sm">
@@ -411,11 +431,35 @@ export default function App() {
                 </div>
               </div>
 
+              {/* NUEVA TARJETA DE CALIDAD DEL AIRE */}
+              <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 shadow-lg">
+                <h4 className="font-bold text-slate-300 mb-4 flex items-center gap-2"><Wind size={16}/> Calidad del Aire (Carga Útil)</h4>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between bg-slate-950 p-2.5 rounded">
+                    <span className="text-slate-400">eCO2 (Dióxido de Carbono)</span> 
+                    <span className="text-emerald-400 font-mono">{lastRow.eco2 || 0} ppm</span>
+                  </div>
+                  <div className="flex justify-between bg-slate-950 p-2.5 rounded">
+                    <span className="text-slate-400">TVOC (Compuestos Orgánicos)</span> 
+                    <span className="text-emerald-400 font-mono">{lastRow.tvoc || 0} ppb</span>
+                  </div>
+                  <div className="flex justify-between bg-slate-950 p-2.5 rounded border-t border-slate-800 mt-2 pt-3">
+                    <span className="text-slate-400">Vibración</span> 
+                    {(lastRow.vib || 0) > 0 ? (
+                      <span className="text-orange-400 font-bold">¡ALERTA DE SHOCK!</span>
+                    ) : (
+                      <span className="text-emerald-400">Normal</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
               <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 flex flex-col shadow-lg">
                 <h4 className="font-bold text-slate-300 mb-4 flex items-center gap-2"><Battery size={16}/> Energía y Enlace</h4>
                 <div className="h-24 mb-4 bg-slate-950 rounded-lg p-2">
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={flightData}>
+                      <XAxis dataKey="time" hide />
                       <YAxis domain={['auto', 'auto']} hide />
                       <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }} />
                       <Line type="linear" dataKey="vbat" name="Batería (V)" stroke="#10b981" strokeWidth={2} dot={false} />
@@ -426,6 +470,7 @@ export default function App() {
                 <div className="h-24 bg-slate-950 rounded-lg p-2">
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={flightData}>
+                      <XAxis dataKey="time" hide />
                       <YAxis hide />
                       <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }} />
                       <Line type="linear" dataKey="rssi" name="RSSI (dBm)" stroke="#3b82f6" strokeWidth={1.5} dot={false} />
@@ -466,9 +511,9 @@ export default function App() {
                       <tr>
                         <th className="p-3 font-bold">Tiempo (s)</th>
                         <th className="p-3 font-bold">Altitud Rec. (m)</th>
-                        <th className="p-3 font-bold">Acel X (g)</th>
-                        <th className="p-3 font-bold">Acel Y (g)</th>
                         <th className="p-3 font-bold">Acel Z (g)</th>
+                        <th className="p-3 font-bold">eCO2 (ppm)</th>
+                        <th className="p-3 font-bold">TVOC (ppb)</th>
                         <th className="p-3 font-bold">Temp AHT (°C)</th>
                         <th className="p-3 font-bold">Presión (hPa)</th>
                       </tr>
@@ -478,9 +523,9 @@ export default function App() {
                         <tr key={i} className="hover:bg-slate-800/50 transition-colors font-mono text-xs">
                           <td className="p-3 text-cyan-400">{row.time}</td>
                           <td className="p-3">{row.altitude.toFixed(2)}</td>
-                          <td className="p-3">{row.ax.toFixed(3)}</td>
-                          <td className="p-3">{row.ay.toFixed(3)}</td>
                           <td className="p-3">{row.az.toFixed(3)}</td>
+                          <td className="p-3">{row.eco2}</td>
+                          <td className="p-3">{row.tvoc}</td>
                           <td className="p-3">{row.tempAHT.toFixed(2)}</td>
                           <td className="p-3">{row.pressure.toFixed(2)}</td>
                         </tr>
