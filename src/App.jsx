@@ -50,7 +50,12 @@ export default function App() {
     const channel = supabase
       .channel('telemetry_live')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'telemetry' }, (payload) => {
-        setRawData(prev => [...prev, payload.new]);
+        // En React, a veces el array "prev" no dispara la actualización visual. 
+        // Clonamos el array para forzar a que React sepa que hay datos nuevos.
+        setRawData(prev => {
+          const newData = [...prev, payload.new];
+          return newData; 
+        });
         setIsLive(true);
       })
       .subscribe();
