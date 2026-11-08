@@ -50,11 +50,13 @@ export default function App() {
     const channel = supabase
       .channel('telemetry_live')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'telemetry' }, (payload) => {
-        // En React, a veces el array "prev" no dispara la actualización visual. 
-        // Clonamos el array para forzar a que React sepa que hay datos nuevos.
         setRawData(prev => {
           const newData = [...prev, payload.new];
-          return newData; 
+          // Limitar a los últimos 500 datos para que la gráfica fluya rápido y no se congele
+          if (newData.length > 500) {
+            return newData.slice(newData.length - 500);
+          }
+          return newData;
         });
         setIsLive(true);
       })
@@ -69,9 +71,13 @@ export default function App() {
     procesarDatos(rawData);
   }, [rawData]);
 
-  // 3. FUNCIÓN DE PROCESAMIENTO CENTRAL (Nube o CSV)
+ // 3. FUNCIÓN DE PROCESAMIENTO CENTRAL (Nube o CSV)
   const procesarDatos = (data) => {
-    const t0 = data[0].t_ms || 0;
+    if (!data || data.length === 0) return;
+
+    // Buscar el primer milisegundo válido para anclar el Tiempo = 0
+    const primerDatoValido = data.find(d => d.t_ms != null);
+    const t0 = primerDatoValido ? primerDatoValido.t_ms : 0;
     
     // Calibrar presión base (P0) con soporte para minúsculas
     let p0_sum = 0; let p0_count = 0;
@@ -82,36 +88,32 @@ export default function App() {
     const P0 = p0_count > 0 ? p0_sum / p0_count : 1013.25;
 
     const processed = data.map(row => {
-      // Extraer variables soportando los nombres en minúsculas de Supabase
       const ax = row.ax_g || 0; const ay = row.ay_g || 0; const az = row.az_g || 0;
       const pres = row.pres_hpa || row.pres_hPa || P0;
       
-      const time_sec = row.t_ms ? ((row.t_ms - t0) / 1000).toFixed(2) : 0;
-      const alt_real = 44330 * (1 - Math.pow(pres / P0, 1 / 5.255));
+      // Tiempo estrictamente normalizado desde 0
+      const current_t_ms = row.t_ms || 0;
+      let time_sec = (current_t_ms - t0) / 1000;
+      if (time_sec < 0) time_sec = 0; // Prevenir saltos negativos
+
+      // Priorizar la altitud calculada por el ESP32 (alt_rel_m) o calcularla localmente
+      const alt_real = row.alt_rel_m !== undefined ? row.alt_rel_m : (44330 * (1 - Math.pow(pres / P0, 1 / 5.255)));
       const absG = Math.sqrt(ax*ax + ay*ay + az*az);
 
       return {
-        time: Number(time_sec),
-        altitude: row.alt_rel_m || alt_real, 
-        pressure: pres,
-        tempAHT: row.temp_aht_c || row.temp_aht_C || 0,
-        tempBMP: row.temp_bmp_c || row.temp_bmp_C || 0,
-        humidity: row.hum_pct || 0,
+        time: Number(time_sec.toFixed(2)),
+        altitude: Number(alt_real) || 0,
+        pressure: Number(pres) || 0,
+        tempAHT: Number(row.temp_aht_c || row.temp_aht_C || 0),
+        tempBMP: Number(row.temp_bmp_c || row.temp_bmp_C || 0),
+        humidity: Number(row.hum_pct || 0),
         ax, ay, az,
         gForceAbs: absG,
         gForceNet: Math.max(0, absG - 1),
         gx: row.gx_dps || 0, gy: row.gy_dps || 0, gz: row.gz_dps || 0,
-        mx: row.mx_ut || row.mx_uT || 0, 
-        my: row.my_ut || row.my_uT || 0, 
-        mz: row.mz_ut || row.mz_uT || 0,
-        
-        eco2: row.eco2_ppm || 0,
-        tvoc: row.tvoc_ppb || 0,
-        vib: row.vib || 0,
-        lat: row.lat || 0,
-        lon: row.lon || 0,
-
-        sats: row.sats || 0,
+        mx: row.mx_ut || row.mx_uT || 0, my: row.my_ut || row.my_uT || 0, mz: row.mz_ut || row.mz_uT || 0,
+        eco2: row.eco2_ppm || 0, tvoc: row.tvoc_ppb || 0, vib: row.vib || 0,
+        lat: row.lat || 0, lon: row.lon || 0, sats: row.sats || 0,
         roll: row.roll_deg || 0, pitch: row.pitch_deg || 0,
         vbat: row.vbat_v || row.vbat_V || 0, 
         rssi: row.rssi_dbm || row.rssi_dBm || 0, 
@@ -119,8 +121,11 @@ export default function App() {
         perdidos: row.perdidos || 0
       };
     });
+    
     setFlightData(processed);
   };
+
+
   // 4. CARGA MANUAL DE CSV
   const handleFileUpload = (event) => {
     const file = event.target.files[0];
