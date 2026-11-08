@@ -3,9 +3,9 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { Rocket, Activity, Wind, Thermometer, Globe, Upload, Star, Crosshair, Map, Users, Shield, Cpu, PenTool, Calculator, Laptop, ChevronDown, ChevronUp, AlertCircle, CheckCircle2, Battery } from 'lucide-react';
 import Papa from 'papaparse';
 import { supabase } from './supabaseClient';
-import RocketCanvas from './RocketModel'; // Importamos tu nuevo cohete 3D
+import RocketCanvas from './RocketModel';
 
-// Datos de prueba iniciales (se muestran mientras no hay datos en vivo o CSV)
+// Datos de prueba iniciales
 const mockFlightData = Array.from({ length: 30 }, (_, i) => {
   const ax = 0.1; const ay = 0.1; const az = i === 2 ? 4.5 : 1.0;
   const absG = Math.sqrt(ax*ax + ay*ay + az*az);
@@ -52,7 +52,6 @@ export default function App() {
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'telemetry' }, (payload) => {
         setRawData(prev => {
           const newData = [...prev, payload.new];
-          // Limitar a los últimos 500 datos para que la gráfica fluya rápido y no se congele
           if (newData.length > 500) {
             return newData.slice(newData.length - 500);
           }
@@ -65,21 +64,19 @@ export default function App() {
     return () => { supabase.removeChannel(channel); };
   }, []);
 
-  // 2. CEREBRO MATEMÁTICO: Procesa los datos crudos cuando cambian
+  // 2. CEREBRO MATEMÁTICO
   useEffect(() => {
     if (rawData.length === 0) return;
     procesarDatos(rawData);
   }, [rawData]);
 
- // 3. FUNCIÓN DE PROCESAMIENTO CENTRAL (Nube o CSV)
+  // 3. FUNCIÓN DE PROCESAMIENTO CENTRAL
   const procesarDatos = (data) => {
     if (!data || data.length === 0) return;
 
-    // Buscar el primer milisegundo válido para anclar el Tiempo = 0
     const primerDatoValido = data.find(d => d.t_ms != null);
     const t0 = primerDatoValido ? primerDatoValido.t_ms : 0;
     
-    // Calibrar presión base (P0) con soporte para minúsculas
     let p0_sum = 0; let p0_count = 0;
     for (let i = 0; i < Math.min(50, data.length); i++) {
       const presBase = data[i].pres_hpa || data[i].pres_hPa;
@@ -91,12 +88,10 @@ export default function App() {
       const ax = row.ax_g || 0; const ay = row.ay_g || 0; const az = row.az_g || 0;
       const pres = row.pres_hpa || row.pres_hPa || P0;
       
-      // Tiempo estrictamente normalizado desde 0
       const current_t_ms = row.t_ms || 0;
       let time_sec = (current_t_ms - t0) / 1000;
-      if (time_sec < 0) time_sec = 0; // Prevenir saltos negativos
+      if (time_sec < 0) time_sec = 0;
 
-      // Priorizar la altitud calculada por el ESP32 (alt_rel_m) o calcularla localmente
       const alt_real = row.alt_rel_m !== undefined ? row.alt_rel_m : (44330 * (1 - Math.pow(pres / P0, 1 / 5.255)));
       const absG = Math.sqrt(ax*ax + ay*ay + az*az);
 
@@ -125,7 +120,6 @@ export default function App() {
     setFlightData(processed);
   };
 
-
   // 4. CARGA MANUAL DE CSV
   const handleFileUpload = (event) => {
     const file = event.target.files[0];
@@ -135,7 +129,6 @@ export default function App() {
       Papa.parse(file, {
         header: true, dynamicTyping: true, skipEmptyLines: true,
         complete: (results) => {
-          // Filtramos filas vacías o corruptas
           const validData = results.data.filter(row => row.t_ms !== undefined && row.t_ms !== null);
           setRawData(validData);
         }
@@ -143,7 +136,6 @@ export default function App() {
     }
   };
 
-  // Variables calculadas para los indicadores
   const maxAltitude = flightData.length > 0 ? Math.max(...flightData.map(d => d.altitude)) : 0;
   const minAltitude = flightData.length > 0 ? Math.min(...flightData.map(d => d.altitude)) : 0;
   const maxGForceNet = flightData.length > 0 ? Math.max(...flightData.map(d => d.gForceNet)) : 0;
@@ -402,11 +394,9 @@ export default function App() {
                 </div>
               </div>
 
-
-            {/* MODELO 3D DEL COHETE */}
+              {/* MODELO 3D DEL COHETE */}
               <div className="rounded-2xl bg-slate-900 border border-slate-800 shadow-lg relative overflow-hidden min-h-[350px] w-full">
                 
-                {/* Textos por encima del Canvas (zIndex alto y pointer-events-none para que no bloqueen el mouse) */}
                 <div className="absolute top-4 left-4 z-10 text-left pointer-events-none">
                   <h4 className="font-bold text-slate-300 drop-shadow-md">Estimación de Actitud 3D</h4>
                   <p className="text-xs text-emerald-400 mt-1 font-mono drop-shadow-md bg-slate-950/50 px-2 py-1 rounded inline-block">
@@ -414,7 +404,6 @@ export default function App() {
                   </p>
                 </div>
                 
-                {/* Aquí renderizamos el Canvas 3D */}
                 <RocketCanvas roll={lastRow.roll || 0} pitch={lastRow.pitch || 0} />
                 
                 <div className="absolute bottom-4 w-full text-center z-10 pointer-events-none">
@@ -423,6 +412,76 @@ export default function App() {
                   </p>
                 </div>
               </div>
+            </div> {/* <-- AQUÍ ESTÁ EL DIV QUE FALTABA PARA CERRAR EL GRID */}
+
+            {/* NUEVA SECCIÓN: RASTREO Y RECUPERACIÓN GPS */}
+            <h3 className="text-xl font-bold mt-10 border-b border-slate-800 pb-2 text-emerald-400">Rastreo y Recuperación (GPS)</h3>
+            <div className="bg-slate-900 p-5 rounded-2xl border border-slate-800 shadow-lg">
+              <div className="flex flex-col lg:flex-row gap-6">
+                
+                {/* Panel de Datos GPS */}
+                <div className="flex-1 flex flex-col justify-between">
+                  <div>
+                    <h4 className="font-bold text-slate-300 mb-4 flex items-center gap-2">
+                       Coordenadas de Aterrizaje
+                    </h4>
+                    <div className="space-y-3 text-sm mb-4">
+                      <div className="flex justify-between bg-slate-950 p-3 rounded border border-slate-800">
+                        <span className="text-slate-400">Latitud</span>
+                        <span className="font-mono text-cyan-400 font-bold">
+                          {lastRow.lat !== 0 ? (lastRow.lat).toFixed(6) : 'Buscando...'}
+                        </span>
+                      </div>
+                      <div className="flex justify-between bg-slate-950 p-3 rounded border border-slate-800">
+                        <span className="text-slate-400">Longitud</span>
+                        <span className="font-mono text-cyan-400 font-bold">
+                          {lastRow.lon !== 0 ? (lastRow.lon).toFixed(6) : 'Buscando...'}
+                        </span>
+                      </div>
+                      <div className="flex justify-between bg-slate-950 p-3 rounded border border-slate-800">
+                        <span className="text-slate-400">Satélites en Fix (SATS)</span>
+                        <span className={`font-mono font-bold ${lastRow.sats > 0 ? 'text-emerald-400' : 'text-orange-400'}`}>
+                          {lastRow.sats || 0}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Botón de Emergencia para abrir en el celular */}
+                  {lastRow.lat !== 0 && lastRow.lon !== 0 ? (
+                    <a 
+                      href={`https://www.google.com/maps/search/?api=1&query=${lastRow.lat},${lastRow.lon}`} 
+                      target="_blank" 
+                      rel="noreferrer"
+                      className="block w-full bg-emerald-600 hover:bg-emerald-500 text-white text-center py-3 rounded-xl font-bold transition-colors shadow-lg shadow-emerald-900/20"
+                    >
+                      📍 Abrir en Google Maps (Celular)
+                    </a>
+                  ) : (
+                    <button disabled className="block w-full bg-slate-800 text-slate-500 text-center py-3 rounded-xl font-bold cursor-not-allowed border border-slate-700">
+                      Esperando conexión satelital...
+                    </button>
+                  )}
+                </div>
+                
+                {/* Visualizador del Mapa Satelital */}
+                <div className="flex-[2] h-[350px] bg-slate-950 rounded-xl overflow-hidden border border-slate-700 relative shadow-inner">
+                  {lastRow.lat !== 0 && lastRow.lon !== 0 ? (
+                    <iframe 
+                      title="Mapa de Recuperación"
+                      width="100%" height="100%" style={{ border: 0 }}
+                      loading="lazy" allowFullScreen 
+                      src={`https://maps.google.com/maps?q=${lastRow.lat},${lastRow.lon}&t=k&z=18&output=embed`}
+                    ></iframe>
+                  ) : (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-600">
+                      <p className="font-medium">El radar está inactivo.</p>
+                      <p className="text-xs mt-1">El mapa aparecerá cuando el módulo GPS obtenga coordenadas válidas.</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
 
             <h3 className="text-xl font-bold mt-10 border-b border-slate-800 pb-2 text-purple-400">Diagnóstico del sistema</h3>
             <div className="grid md:grid-cols-4 gap-6">
@@ -445,16 +504,16 @@ export default function App() {
                 </div>
               </div>
 
-              {/* NUEVA TARJETA DE CALIDAD DEL AIRE */}
+              {/* TARJETA DE CALIDAD DEL AIRE */}
               <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 shadow-lg">
-                <h4 className="font-bold text-slate-300 mb-4 flex items-center gap-2"><Wind size={16}/> Calidad del Aire (Carga Útil)</h4>
+                <h4 className="font-bold text-slate-300 mb-4 flex items-center gap-2"><Wind size={16}/> Calidad del Aire</h4>
                 <div className="space-y-2 text-sm">
                   <div className="flex justify-between bg-slate-950 p-2.5 rounded">
-                    <span className="text-slate-400">eCO2 (Dióxido de Carbono)</span> 
+                    <span className="text-slate-400">eCO2 (Dióxido)</span> 
                     <span className="text-emerald-400 font-mono">{lastRow.eco2 || 0} ppm</span>
                   </div>
                   <div className="flex justify-between bg-slate-950 p-2.5 rounded">
-                    <span className="text-slate-400">TVOC (Compuestos Orgánicos)</span> 
+                    <span className="text-slate-400">TVOC (Orgánicos)</span> 
                     <span className="text-emerald-400 font-mono">{lastRow.tvoc || 0} ppb</span>
                   </div>
                   <div className="flex justify-between bg-slate-950 p-2.5 rounded border-t border-slate-800 mt-2 pt-3">
