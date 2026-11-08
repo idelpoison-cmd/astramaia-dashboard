@@ -1,9 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 
-// 1. La misma URL de tu proyecto
-const supabaseUrl = 'https://rbxzlgfxqqxuhuacqopv.supabase.co';
-
-// 2. OJO: Aquí va la clave PÚBLICA (sb_publishable_...), NUNCA la secreta
-const supabaseAnonKey = 'sb_publishable_aTzMTwxzS58fgkFSYhoLEA_V3EG-Cfe';
+// Esto le dice a la web que busque las variables seguras que configuraste en Vercel
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
