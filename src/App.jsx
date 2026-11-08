@@ -1,25 +1,28 @@
 import React, { useState, useEffect } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine } from 'recharts';
-import { Rocket, Activity, Wind, Thermometer, Globe, Upload, Star, Crosshair, Map, Users, Shield, Cpu, PenTool, Calculator, Laptop, ChevronDown, ChevronUp, AlertCircle, CheckCircle2, Battery } from 'lucide-react';
+import { Rocket, Activity, Wind, Thermometer, Globe, Upload, Star, Crosshair, Map, Users, Shield, Cpu, PenTool, Calculator, Laptop, ChevronDown, ChevronUp, AlertCircle, CheckCircle2, Battery, Target } from 'lucide-react';
 import Papa from 'papaparse';
 import { supabase } from './supabaseClient';
 import RocketCanvas from './RocketModel';
 
-// Datos de prueba iniciales
+// Datos de prueba iniciales adaptados a la nueva estructura
 const mockFlightData = Array.from({ length: 30 }, (_, i) => {
   const ax = 0.1; const ay = 0.1; const az = i === 2 ? 4.5 : 1.0;
   const absG = Math.sqrt(ax*ax + ay*ay + az*az);
   return {
     time: i * 0.1, 
     altitude: i < 15 ? i * 26.6 : 400 - (i - 15) * 15, 
+    gpsAltitude: 0,
     pressure: 750 - i,
     tempAHT: 22 - (i * 0.1), tempBMP: 21.8 - (i * 0.1), humidity: 45,
     ax, ay, az, 
     gForceAbs: absG, 
     gForceNet: Math.max(0, absG - 1),
     gx: i*2, gy: i, gz: 0, roll: i*5, pitch: i < 15 ? 80 : -80, 
-    eco2: 400, tvoc: 0, vib: 0, lat: 0, lon: 0,
-    vbat: 3.76, rssi: -45, snr: 13, perdidos: 0, mx: 0, my: 0, mz: 0, sats: 0
+    mx: 0, my: 0, mz: 0,
+    eco2: 400, tvoc: 0, ccs_estado: 0, vib: 0, 
+    lat: 0, lon: 0, sats: 0, hdop: 0,
+    vbat: 3.76, estado: 0, rssi: -45, snr: 13, perdidos: 0
   };
 });
 
@@ -52,9 +55,7 @@ export default function App() {
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'telemetry' }, (payload) => {
         setRawData(prev => {
           const newData = [...prev, payload.new];
-          if (newData.length > 500) {
-            return newData.slice(newData.length - 500);
-          }
+          if (newData.length > 500) return newData.slice(newData.length - 500);
           return newData;
         });
         setIsLive(true);
@@ -70,72 +71,82 @@ export default function App() {
     procesarDatos(rawData);
   }, [rawData]);
 
- // 3. FUNCIÓN DE PROCESAMIENTO CENTRAL
+  // 3. FUNCIÓN DE PROCESAMIENTO CENTRAL CON TUS VARIABLES EXACTAS
   const procesarDatos = (data) => {
     if (!data || data.length === 0) return;
 
+    // Buscar el primer t_ms válido para anclar el Tiempo = 0
     const primerDatoValido = data.find(d => d.t_ms != null);
     const t0 = primerDatoValido ? primerDatoValido.t_ms : 0;
     
+    // Calibrar la presión atmosférica inicial (P0)
     let p0_sum = 0; let p0_count = 0;
     for (let i = 0; i < Math.min(50, data.length); i++) {
-      // Busca la presión bajo distintos nombres posibles
-      const presBase = data[i].pres_hpa ?? data[i].pres_hPa ?? data[i].presion ?? data[i].pres ?? 0;
+      // Uso de OR con la versión en minúsculas por si Supabase fuerza minúsculas en la nube
+      const presBase = data[i].pres_hPa ?? data[i].pres_hpa ?? 0;
       if (presBase > 0) { p0_sum += presBase; p0_count++; }
     }
     const P0 = p0_count > 0 ? p0_sum / p0_count : 1013.25;
 
     const processed = data.map((row, index) => {
-      // 🚨 HERRAMIENTA DE DIAGNÓSTICO: Imprime el primer dato en la consola
-      if (index === 0) {
-        console.log("🔍 DATO CRUDO RECIBIDO DE SUPABASE:", row);
-      }
+      if (index === 0) console.log("🔍 PAQUETE RECIBIDO DESDE SUPABASE O CSV:", row);
 
-      const ax = row.ax_g ?? row.ax ?? 0; 
-      const ay = row.ay_g ?? row.ay ?? 0; 
-      const az = row.az_g ?? row.az ?? 0;
-      const pres = row.pres_hpa ?? row.pres_hPa ?? row.presion ?? row.pres ?? P0;
+      // Variables extraídas respetando EXACTAMENTE tus nombres
+      const ax = row.ax_g ?? 0; 
+      const ay = row.ay_g ?? 0; 
+      const az = row.az_g ?? 0;
+      const pres = row.pres_hPa ?? row.pres_hpa ?? P0;
       
-      const current_t_ms = row.t_ms ?? row.tiempo ?? row.t ?? 0;
+      const current_t_ms = row.t_ms ?? 0;
       let time_sec = (current_t_ms - t0) / 1000;
       if (time_sec < 0) time_sec = 0;
 
-      // Cálculo de Altitud: Intenta tomar el dato del sensor, si no existe, lo calcula
-      let alt_real = row.alt_rel_m ?? row.altitud ?? row.alt ?? row.altitude ?? undefined;
-      if (alt_real === undefined) {
-        alt_real = 44330 * (1 - Math.pow(pres / P0, 1 / 5.255));
-      }
-
+      const alt_real = row.alt_rel_m !== undefined && row.alt_rel_m !== null 
+                       ? row.alt_rel_m 
+                       : (44330 * (1 - Math.pow(pres / P0, 1 / 5.255)));
       const absG = Math.sqrt(ax*ax + ay*ay + az*az);
 
       return {
         time: Number(time_sec.toFixed(2)),
         altitude: Number(alt_real) || 0,
+        gpsAltitude: Number(row.gps_alt_m ?? 0),
         pressure: Number(pres) || 0,
-        // Busca la temperatura bajo cualquier nombre posible
-        tempAHT: Number(row.temp_aht_c ?? row.temp_aht_C ?? row.temperatura ?? row.temp ?? row.temperature ?? 0),
-        tempBMP: Number(row.temp_bmp_c ?? row.temp_bmp_C ?? 0),
-        humidity: Number(row.hum_pct ?? row.humedad ?? row.hum ?? 0),
+        
+        // Temperaturas respetando temp_aht_C y temp_bmp_C
+        tempAHT: Number(row.temp_aht_C ?? row.temp_aht_c ?? 0),
+        tempBMP: Number(row.temp_bmp_C ?? row.temp_bmp_c ?? 0),
+        humidity: Number(row.hum_pct ?? 0),
+        
         ax, ay, az,
         gForceAbs: absG,
         gForceNet: Math.max(0, absG - 1),
-        gx: row.gx_dps ?? row.gx ?? 0, 
-        gy: row.gy_dps ?? row.gy ?? 0, 
-        gz: row.gz_dps ?? row.gz ?? 0,
-        mx: row.mx_ut ?? row.mx ?? 0, 
-        my: row.my_ut ?? row.my ?? 0, 
-        mz: row.mz_ut ?? row.mz ?? 0,
-        eco2: row.eco2_ppm ?? row.eco2 ?? 0, 
-        tvoc: row.tvoc_ppb ?? row.tvoc ?? 0, 
-        vib: row.vib ?? row.vibracion ?? 0,
-        lat: row.lat ?? row.latitud ?? 0, 
-        lon: row.lon ?? row.longitud ?? 0, 
-        sats: row.sats ?? row.satelites ?? 0,
-        roll: row.roll_deg ?? row.roll ?? 0, 
-        pitch: row.pitch_deg ?? row.pitch ?? 0,
-        vbat: row.vbat_v ?? row.vbat ?? row.bateria ?? 0, 
-        rssi: row.rssi_dbm ?? row.rssi ?? 0, 
-        snr: row.snr_db ?? row.snr ?? 0,
+        
+        gx: row.gx_dps ?? 0, 
+        gy: row.gy_dps ?? 0, 
+        gz: row.gz_dps ?? 0,
+        
+        // Magnetómetro y sensores de gases
+        mx: row.mx_uT ?? row.mx_ut ?? 0, 
+        my: row.my_uT ?? row.my_ut ?? 0, 
+        mz: row.mz_uT ?? row.mz_ut ?? 0,
+        eco2: row.eco2_ppm ?? 0, 
+        tvoc: row.tvoc_ppb ?? 0, 
+        ccs_estado: row.ccs_estado ?? 0, 
+        vib: row.vib ?? 0,
+        
+        // Posicionamiento y Actitud
+        lat: row.lat ?? 0, 
+        lon: row.lon ?? 0, 
+        sats: row.sats ?? 0, 
+        hdop: row.hdop ?? 0,
+        roll: row.roll_deg ?? 0, 
+        pitch: row.pitch_deg ?? 0,
+        
+        // Batería y estado del enlace LoRa
+        vbat: row.vbat_V ?? row.vbat_v ?? 0, 
+        estado: row.estado ?? 0,
+        rssi: row.rssi_dBm ?? row.rssi_dbm ?? 0, 
+        snr: row.snr_dB ?? row.snr_db ?? 0, 
         perdidos: row.perdidos ?? 0
       };
     });
@@ -172,6 +183,18 @@ export default function App() {
   const lastRow = flightData[flightData.length - 1] || {};
   const magWorks = (lastRow.mx !== 0 || lastRow.my !== 0 || lastRow.mz !== 0);
   const gpsWorks = lastRow.sats > 0;
+
+  // Decodificador de estado del CCS811
+  const getCCSStatus = (code) => {
+    switch(code) {
+      case 0: return { text: "Normal", color: "text-emerald-400" };
+      case 1: return { text: "Calentando", color: "text-yellow-400" };
+      case 2: return { text: "Error", color: "text-red-400" };
+      case 3: return { text: "No Detectado", color: "text-slate-500" };
+      default: return { text: "Desconocido", color: "text-slate-500" };
+    }
+  };
+  const ccsStatus = getCCSStatus(lastRow.ccs_estado);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-purple-500/30">
@@ -353,9 +376,9 @@ export default function App() {
                       <YAxis stroke="#94a3b8" tick={{fontSize: 12}} />
                       <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }} />
                       <Legend verticalAlign="top" height={36}/>
-                      <Line type="step" dataKey="ax" name="Eje X" stroke="#06b6d4" strokeWidth={2} dot={false} />
-                      <Line type="step" dataKey="ay" name="Eje Y" stroke="#a855f7" strokeWidth={2} dot={false} />
-                      <Line type="step" dataKey="az" name="Eje Z" stroke="#fb7185" strokeWidth={2} dot={false} />
+                      <Line type="step" dataKey="ax" name="Eje X (g)" stroke="#06b6d4" strokeWidth={2} dot={false} />
+                      <Line type="step" dataKey="ay" name="Eje Y (g)" stroke="#a855f7" strokeWidth={2} dot={false} />
+                      <Line type="step" dataKey="az" name="Eje Z (g)" stroke="#fb7185" strokeWidth={2} dot={false} />
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
@@ -419,7 +442,6 @@ export default function App() {
 
               {/* MODELO 3D DEL COHETE */}
               <div className="rounded-2xl bg-slate-900 border border-slate-800 shadow-lg relative overflow-hidden min-h-[350px] w-full">
-                
                 <div className="absolute top-4 left-4 z-10 text-left pointer-events-none">
                   <h4 className="font-bold text-slate-300 drop-shadow-md">Estimación de Actitud 3D</h4>
                   <p className="text-xs text-emerald-400 mt-1 font-mono drop-shadow-md bg-slate-950/50 px-2 py-1 rounded inline-block">
@@ -435,18 +457,18 @@ export default function App() {
                   </p>
                 </div>
               </div>
-            </div> {/* <-- AQUÍ ESTÁ EL DIV QUE FALTABA PARA CERRAR EL GRID */}
+            </div> 
 
             {/* NUEVA SECCIÓN: RASTREO Y RECUPERACIÓN GPS */}
             <h3 className="text-xl font-bold mt-10 border-b border-slate-800 pb-2 text-emerald-400">Rastreo y Recuperación (GPS)</h3>
             <div className="bg-slate-900 p-5 rounded-2xl border border-slate-800 shadow-lg">
               <div className="flex flex-col lg:flex-row gap-6">
                 
-                {/* Panel de Datos GPS */}
+                {/* Panel de Datos GPS ACTUALIZADO */}
                 <div className="flex-1 flex flex-col justify-between">
                   <div>
                     <h4 className="font-bold text-slate-300 mb-4 flex items-center gap-2">
-                       Coordenadas de Aterrizaje
+                        Coordenadas de Aterrizaje
                     </h4>
                     <div className="space-y-3 text-sm mb-4">
                       <div className="flex justify-between bg-slate-950 p-3 rounded border border-slate-800">
@@ -462,7 +484,13 @@ export default function App() {
                         </span>
                       </div>
                       <div className="flex justify-between bg-slate-950 p-3 rounded border border-slate-800">
-                        <span className="text-slate-400">Satélites en Fix (SATS)</span>
+                        <span className="text-slate-400 flex items-center gap-1"><Target size={14}/> HDOP (Precisión)</span>
+                        <span className={`font-mono font-bold ${lastRow.hdop < 2 && lastRow.hdop > 0 ? 'text-emerald-400' : 'text-orange-400'}`}>
+                          {lastRow.hdop || 0}
+                        </span>
+                      </div>
+                      <div className="flex justify-between bg-slate-950 p-3 rounded border border-slate-800">
+                        <span className="text-slate-400">Satélites (SATS)</span>
                         <span className={`font-mono font-bold ${lastRow.sats > 0 ? 'text-emerald-400' : 'text-orange-400'}`}>
                           {lastRow.sats || 0}
                         </span>
@@ -470,7 +498,6 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Botón de Emergencia para abrir en el celular */}
                   {lastRow.lat !== 0 && lastRow.lon !== 0 ? (
                     <a 
                       href={`https://www.google.com/maps/search/?api=1&query=${lastRow.lat},${lastRow.lon}`} 
@@ -513,10 +540,10 @@ export default function App() {
                 <h4 className="font-bold text-slate-300 mb-4 flex items-center gap-2"><Thermometer size={16}/> Temperatura y Humedad</h4>
                 <div className="space-y-2 text-sm">
                   <div className="flex justify-between bg-slate-950 p-2.5 rounded">
-                    <span className="text-slate-400">Temperatura AHT</span> <span className="font-mono">{currentTemp.toFixed(2)} °C</span>
+                    <span className="text-slate-400">Temp AHT</span> <span className="font-mono">{currentTemp.toFixed(2)} °C</span>
                   </div>
                   <div className="flex justify-between bg-slate-950 p-2.5 rounded">
-                    <span className="text-slate-400">Temperatura BMP</span> <span className="font-mono">{(lastRow.tempBMP || 0).toFixed(2)} °C</span>
+                    <span className="text-slate-400">Temp BMP</span> <span className="font-mono">{(lastRow.tempBMP || 0).toFixed(2)} °C</span>
                   </div>
                   <div className="flex justify-between bg-slate-950 p-2.5 rounded border border-orange-500/20">
                     <span className="text-slate-400">Diferencia (Error)</span> <span className="text-orange-400 font-mono">{Math.abs(currentTemp - (lastRow.tempBMP || 0)).toFixed(2)} °C</span>
@@ -527,7 +554,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* TARJETA DE CALIDAD DEL AIRE */}
+              {/* TARJETA DE CALIDAD DEL AIRE ACTUALIZADA */}
               <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 shadow-lg">
                 <h4 className="font-bold text-slate-300 mb-4 flex items-center gap-2"><Wind size={16}/> Calidad del Aire</h4>
                 <div className="space-y-2 text-sm">
@@ -540,9 +567,13 @@ export default function App() {
                     <span className="text-emerald-400 font-mono">{lastRow.tvoc || 0} ppb</span>
                   </div>
                   <div className="flex justify-between bg-slate-950 p-2.5 rounded border-t border-slate-800 mt-2 pt-3">
+                    <span className="text-slate-400">Estado CCS811</span> 
+                    <span className={`font-bold ${ccsStatus.color}`}>{ccsStatus.text}</span>
+                  </div>
+                  <div className="flex justify-between bg-slate-950 p-2.5 rounded">
                     <span className="text-slate-400">Vibración</span> 
                     {(lastRow.vib || 0) > 0 ? (
-                      <span className="text-orange-400 font-bold">¡ALERTA DE SHOCK!</span>
+                      <span className="text-orange-400 font-bold">¡ALERTA SHOCK!</span>
                     ) : (
                       <span className="text-emerald-400">Normal</span>
                     )}
@@ -561,7 +592,12 @@ export default function App() {
                       <Line type="linear" dataKey="vbat" name="Batería (V)" stroke="#10b981" strokeWidth={2} dot={false} />
                     </LineChart>
                   </ResponsiveContainer>
-                  <div className="text-center text-xs text-slate-500 font-mono border-t border-slate-800 pt-1">Vbat: {(lastRow.vbat || 0).toFixed(3)} V</div>
+                  <div className="flex justify-between text-xs font-mono border-t border-slate-800 pt-1 px-1">
+                    <span className="text-slate-500">Vbat: {(lastRow.vbat || 0).toFixed(3)} V</span>
+                    <span className={`${(lastRow.estado || 0) > 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+                      {((lastRow.estado || 0) & 0x80) ? 'Bat Baja' : 'Bat OK'}
+                    </span>
+                  </div>
                 </div>
                 <div className="h-24 bg-slate-950 rounded-lg p-2">
                   <ResponsiveContainer width="100%" height="100%">
@@ -606,12 +642,13 @@ export default function App() {
                     <thead className="text-xs uppercase bg-slate-950 text-slate-400 sticky top-0">
                       <tr>
                         <th className="p-3 font-bold">Tiempo (s)</th>
-                        <th className="p-3 font-bold">Altitud Rec. (m)</th>
-                        <th className="p-3 font-bold">Acel Z (g)</th>
+                        <th className="p-3 font-bold">Altitud (m)</th>
+                        <th className="p-3 font-bold">Temp (°C)</th>
                         <th className="p-3 font-bold">eCO2 (ppm)</th>
-                        <th className="p-3 font-bold">TVOC (ppb)</th>
-                        <th className="p-3 font-bold">Temp AHT (°C)</th>
-                        <th className="p-3 font-bold">Presión (hPa)</th>
+                        <th className="p-3 font-bold">Acel Z (g)</th>
+                        <th className="p-3 font-bold">Latitud</th>
+                        <th className="p-3 font-bold">Longitud</th>
+                        <th className="p-3 font-bold">Vbat (V)</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/50">
@@ -619,11 +656,12 @@ export default function App() {
                         <tr key={i} className="hover:bg-slate-800/50 transition-colors font-mono text-xs">
                           <td className="p-3 text-cyan-400">{row.time}</td>
                           <td className="p-3">{row.altitude.toFixed(2)}</td>
-                          <td className="p-3">{row.az.toFixed(3)}</td>
-                          <td className="p-3">{row.eco2}</td>
-                          <td className="p-3">{row.tvoc}</td>
                           <td className="p-3">{row.tempAHT.toFixed(2)}</td>
-                          <td className="p-3">{row.pressure.toFixed(2)}</td>
+                          <td className="p-3">{row.eco2}</td>
+                          <td className="p-3">{row.az.toFixed(3)}</td>
+                          <td className="p-3">{row.lat !== 0 ? row.lat.toFixed(5) : 'N/A'}</td>
+                          <td className="p-3">{row.lon !== 0 ? row.lon.toFixed(5) : 'N/A'}</td>
+                          <td className="p-3">{row.vbat.toFixed(2)}</td>
                         </tr>
                       ))}
                     </tbody>
